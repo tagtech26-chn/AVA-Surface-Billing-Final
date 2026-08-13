@@ -106,6 +106,11 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.Property(x => x.SalespersonMobile).HasMaxLength(15).IsRequired();
             e.Property(x => x.SubTotal).HasPrecision(18, 2);
             e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.PromoDiscountPercent).HasPrecision(5, 2);
+            e.Property(x => x.PromoDiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.BranchManagerDiscountPercent).HasPrecision(5, 2);
+            e.Property(x => x.BranchManagerDiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.BranchManagerRemarks).HasMaxLength(500);
             e.Property(x => x.TaxableAmount).HasPrecision(18, 2);
             e.Property(x => x.CgstAmount).HasPrecision(18, 2);
             e.Property(x => x.SgstAmount).HasPrecision(18, 2);
@@ -123,6 +128,7 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.Quantity).HasPrecision(18, 3);
             e.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            e.Property(x => x.DiscountPercent).HasPrecision(5, 2);
             e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
             e.Property(x => x.TaxableAmount).HasPrecision(18, 2);
             e.Property(x => x.CgstAmount).HasPrecision(18, 2);
