@@ -116,6 +116,42 @@ function mergeServerProducts(serverProducts: ServerProduct[]): Product[] {
   });
 }
 
+async function createMissingSeedProducts(serverProducts: ServerProduct[]): Promise<ServerProduct[]> {
+  const existingSkus = new Set(serverProducts.map((p) => p.sku.trim().toUpperCase()));
+  const missing = INITIAL_PRODUCTS.filter((p) => !existingSkus.has(p.sku.trim().toUpperCase()));
+
+  if (missing.length === 0) return serverProducts;
+
+  for (const product of missing) {
+    const response = await fetch('/api/products', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyId: null,
+        sku: product.sku,
+        name: product.name,
+        hsnCode: product.hsnCode,
+        unit: product.unit,
+        costPrice: product.costPrice,
+        sellingPrice: product.sellingPrice,
+        stock: product.stock,
+        reorderLevel: product.reorderLevel,
+        gstRate: product.taxRate,
+        isActive: true
+      })
+    });
+
+    if (!response.ok) {
+      const details = await response.text().catch(() => '');
+      throw new Error(`Product seed reconciliation HTTP ${response.status}${details ? `: ${details}` : ''}`);
+    }
+  }
+
+  const refreshed = await fetch('/api/products');
+  if (!refreshed.ok) throw new Error(`Product refresh HTTP ${refreshed.status}`);
+  return normalizeProductResponse(await refreshed.json() as ProductApiResponse);
+}
+
 let productServerAvailable = false;
 
 async function hydrateProductsFromServer(): Promise<void> {
@@ -126,35 +162,33 @@ async function hydrateProductsFromServer(): Promise<void> {
     if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
 
     const payload = await response.json() as ProductApiResponse;
-    const serverProducts = normalizeProductResponse(payload);
+    let serverProducts = normalizeProductResponse(payload);
 
-    if (serverProducts.length > 0) {
-      setStorageItem(KEYS.PRODUCTS, mergeServerProducts(serverProducts));
-      productServerAvailable = true;
-      return;
+    if (serverProducts.length === 0) {
+      const syncResponse = await fetch('/api/products/sync', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(productPayload(INITIAL_PRODUCTS))
+      });
+
+      if (!syncResponse.ok) {
+        const details = await syncResponse.text().catch(() => '');
+        throw new Error(`Product migration HTTP ${syncResponse.status}${details ? `: ${details}` : ''}`);
+      }
+
+      serverProducts = normalizeProductResponse(await syncResponse.json() as ProductApiResponse);
+    } else {
+      // Reconcile only missing SKUs. Existing SQL products are never overwritten by startup hydration.
+      serverProducts = await createMissingSeedProducts(serverProducts);
     }
 
-    // First migration: upload the existing frontend seed/catalog to SQL Server.
-    const syncResponse = await fetch('/api/products/sync', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(productPayload(INITIAL_PRODUCTS))
-    });
-
-    if (!syncResponse.ok) {
-      const details = await syncResponse.text().catch(() => '');
-      throw new Error(`Product migration HTTP ${syncResponse.status}${details ? `: ${details}` : ''}`);
-    }
-
-    const syncedPayload = await syncResponse.json() as ProductApiResponse;
-    const syncedProducts = normalizeProductResponse(syncedPayload);
-    if (syncedProducts.length === 0) {
+    if (serverProducts.length === 0) {
       throw new Error('Product migration returned an empty catalog.');
     }
 
-    setStorageItem(KEYS.PRODUCTS, mergeServerProducts(syncedProducts));
+    setStorageItem(KEYS.PRODUCTS, mergeServerProducts(serverProducts));
     productServerAvailable = true;
-    console.info(`Migrated ${syncedProducts.length} products to SQL Server.`);
+    console.info(`SQL Server product catalog ready: ${serverProducts.length} products.`);
   } catch (error) {
     productServerAvailable = false;
     console.warn('Product API unavailable; retaining existing local product cache.', error);
@@ -214,6 +248,4 @@ export const Storage = {
   }
 };
 
-// Product vertical slice is server-backed first. Other modules remain untouched
-// until their corresponding .NET business APIs are migrated.
 void hydrateProductsFromServer();
