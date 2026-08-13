@@ -10,11 +10,7 @@ export function formatCurrency(amount: number, symbol = '$'): string {
 export function formatDate(dateString: string): string {
   try {
     const d = new Date(dateString);
-    return d.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   } catch {
     return dateString;
   }
@@ -23,12 +19,7 @@ export function formatDate(dateString: string): string {
 export function formatDateTime(dateString: string): string {
   try {
     const d = new Date(dateString);
-    return d.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   } catch {
     return dateString;
   }
@@ -43,16 +34,17 @@ export function generateId(prefix = 'id'): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
 
-// Permission checking Matrix based on UserRole
 export function canPerformAction(
   role: UserRole,
-  action: 'MANAGE_USERS' | 'MANAGE_PRODUCTS' | 'STOCK_ADJUSTMENT' | 'MANAGE_PROMOS' | 'CREATE_POS_BILL' | 'MANAGE_EXPENSES' | 'VIEW_FINANCIAL_REPORTS' | 'PROCESS_REFUND' | 'MANAGE_WAREHOUSE' | 'EXPORT_TALLY' | 'MANAGE_EWAY_INVOICE' | 'VIEW_AUDIT_LOGS'
+  action: 'MANAGE_USERS' | 'MANAGE_PRODUCTS' | 'STOCK_ADJUSTMENT' | 'MANAGE_PROMOS' | 'CREATE_POS_BILL' | 'MANAGE_EXPENSES' | 'VIEW_FINANCIAL_REPORTS' | 'PROCESS_REFUND' | 'MANAGE_WAREHOUSE' | 'EXPORT_TALLY' | 'MANAGE_EWAY_INVOICE' | 'VIEW_AUDIT_LOGS' | 'APPROVE_BRANCH_MANAGER_DISCOUNT'
 ): boolean {
   switch (role) {
     case 'ADMIN':
-      return true; // Admin can do everything
+      return true;
     case 'MANAGER':
-      return action !== 'MANAGE_USERS'; // Manager can do everything except user management
+      return action !== 'MANAGE_USERS';
+    case 'BRANCH_MANAGER':
+      return ['CREATE_POS_BILL', 'MANAGE_PRODUCTS', 'MANAGE_PROMOS', 'VIEW_FINANCIAL_REPORTS', 'PROCESS_REFUND', 'APPROVE_BRANCH_MANAGER_DISCOUNT'].includes(action);
     case 'ACCOUNTANT':
       return ['VIEW_FINANCIAL_REPORTS', 'MANAGE_EXPENSES', 'EXPORT_TALLY', 'MANAGE_EWAY_INVOICE', 'VIEW_AUDIT_LOGS'].includes(action);
     case 'CASHIER':
