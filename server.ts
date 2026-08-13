@@ -19,6 +19,7 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const DOTNET_API_URL = process.env.VITE_API_URL || "http://localhost:5080";
 
 app.use(express.json({ limit: "2mb" }));
 
@@ -45,6 +46,33 @@ const entityDefaults: Record<string, unknown> = {
 };
 
 const allowedEntities = new Set(Object.keys(entityDefaults));
+
+// Transitional API bridge: product business data is owned by ASP.NET Core + MSSQL.
+// The existing Express/Vite process remains the UI host, but never persists products itself.
+app.use("/api/products", async (req, res, next) => {
+  try {
+    const targetUrl = `${DOTNET_API_URL}/api/products${req.path === "/" ? "" : req.path}`;
+    const headers: Record<string, string> = {};
+    const contentType = req.get("content-type");
+    if (contentType) headers["content-type"] = contentType;
+
+    const hasBody = !["GET", "HEAD"].includes(req.method);
+    const upstream = await fetch(targetUrl, {
+      method: req.method,
+      headers,
+      body: hasBody ? JSON.stringify(req.body) : undefined
+    });
+
+    const responseText = await upstream.text();
+    res.status(upstream.status);
+    const upstreamContentType = upstream.headers.get("content-type");
+    if (upstreamContentType) res.set("content-type", upstreamContentType);
+    return res.send(responseText);
+  } catch (error) {
+    console.error("ASP.NET product API proxy failed:", error);
+    return next(error);
+  }
+});
 
 app.get("/api/health", async (_req, res) => {
   try {
