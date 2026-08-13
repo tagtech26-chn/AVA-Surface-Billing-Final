@@ -1,0 +1,108 @@
+using AVASurface.Server.Domain;
+using Microsoft.EntityFrameworkCore;
+
+namespace AVASurface.Server.Infrastructure;
+
+public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options) : DbContext(options)
+{
+    public DbSet<Company> Companies => Set<Company>();
+    public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
+    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<StockTransaction> StockTransactions => Set<StockTransaction>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Company>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(30).IsRequired();
+            e.Property(x => x.LegalName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Gstin).HasMaxLength(15);
+            e.HasIndex(x => x.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<Customer>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Gstin).HasMaxLength(15);
+            e.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
+            e.HasOne(x => x.Company).WithMany(x => x.Customers).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Product>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Sku).HasMaxLength(80).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(250).IsRequired();
+            e.Property(x => x.HsnCode).HasMaxLength(8);
+            e.Property(x => x.CostPrice).HasPrecision(18, 2);
+            e.Property(x => x.SellingPrice).HasPrecision(18, 2);
+            e.Property(x => x.GstRate).HasPrecision(5, 2);
+            e.Property(x => x.StockQuantity).HasPrecision(18, 3);
+            e.Property(x => x.ReorderLevel).HasPrecision(18, 3);
+            e.HasIndex(x => new { x.CompanyId, x.Sku }).IsUnique();
+            e.HasOne(x => x.Company).WithMany(x => x.Products).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Invoice>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.InvoiceNumber).HasMaxLength(50).IsRequired();
+            e.Property(x => x.SubTotal).HasPrecision(18, 2);
+            e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.TaxableAmount).HasPrecision(18, 2);
+            e.Property(x => x.CgstAmount).HasPrecision(18, 2);
+            e.Property(x => x.SgstAmount).HasPrecision(18, 2);
+            e.Property(x => x.IgstAmount).HasPrecision(18, 2);
+            e.Property(x => x.RoundOffAmount).HasPrecision(18, 2);
+            e.Property(x => x.GrandTotal).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.InvoiceNumber }).IsUnique();
+            e.HasOne(x => x.Company).WithMany(x => x.Invoices).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<InvoiceLine>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Quantity).HasPrecision(18, 3);
+            e.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.TaxableAmount).HasPrecision(18, 2);
+            e.Property(x => x.CgstAmount).HasPrecision(18, 2);
+            e.Property(x => x.SgstAmount).HasPrecision(18, 2);
+            e.Property(x => x.IgstAmount).HasPrecision(18, 2);
+            e.Property(x => x.LineTotal).HasPrecision(18, 2);
+            e.HasOne(x => x.Invoice).WithMany(x => x.Lines).HasForeignKey(x => x.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Payment>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.Method).HasMaxLength(30).IsRequired();
+            e.HasOne(x => x.Invoice).WithMany(x => x.Payments).HasForeignKey(x => x.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<StockTransaction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.QuantityChange).HasPrecision(18, 3);
+            e.Property(x => x.TransactionType).HasMaxLength(40).IsRequired();
+            e.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AuditLog>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Action).HasMaxLength(100).IsRequired();
+            e.Property(x => x.EntityName).HasMaxLength(100).IsRequired();
+        });
+    }
+}
