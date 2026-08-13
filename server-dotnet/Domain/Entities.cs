@@ -36,6 +36,8 @@ public sealed class Product
     public Company Company { get; set; } = null!;
     public string Sku { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string? Barcode { get; set; }
+    public string? Category { get; set; }
     public string? HsnCode { get; set; }
     public string Unit { get; set; } = "PCS";
     public decimal CostPrice { get; set; }
@@ -43,6 +45,17 @@ public sealed class Product
     public decimal GstRate { get; set; }
     public decimal StockQuantity { get; set; }
     public decimal ReorderLevel { get; set; }
+    public string? Description { get; set; }
+    public string? ImageUrl { get; set; }
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public string? TileDimensions { get; set; }
+    public decimal? PcsPerBox { get; set; }
+    public decimal? SqftPerBox { get; set; }
+    public string? TileFinish { get; set; }
+    public string? TileType { get; set; }
+    public string? BatchNo { get; set; }
+    public decimal? PricePerSqFt { get; set; }
+    public decimal? WeightPerBoxKg { get; set; }
     public bool IsActive { get; set; } = true;
 }
 
