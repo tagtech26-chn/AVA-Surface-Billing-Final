@@ -106,6 +106,8 @@ public sealed class Invoice
     public Customer? Customer { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
     public DateTime InvoiceDate { get; set; } = DateTime.UtcNow;
+    public string SalespersonName { get; set; } = string.Empty;
+    public string SalespersonMobile { get; set; } = string.Empty;
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal TaxableAmount { get; set; }
