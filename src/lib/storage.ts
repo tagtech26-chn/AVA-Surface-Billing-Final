@@ -122,34 +122,21 @@ async function createMissingSeedProducts(serverProducts: ServerProduct[]): Promi
 
   if (missing.length === 0) return serverProducts;
 
-  for (const product of missing) {
-    const response = await fetch('/api/products', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        companyId: null,
-        sku: product.sku,
-        name: product.name,
-        hsnCode: product.hsnCode,
-        unit: product.unit,
-        costPrice: product.costPrice,
-        sellingPrice: product.sellingPrice,
-        stock: product.stock,
-        reorderLevel: product.reorderLevel,
-        gstRate: product.taxRate,
-        isActive: true
-      })
-    });
+  // Reconcile all missing SKUs in one request. The ASP.NET sync endpoint matches
+  // by SKU and only changes the products included in this payload, so existing
+  // SQL stock/pricing is not touched during startup hydration.
+  const response = await fetch('/api/products/sync', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(productPayload(missing))
+  });
 
-    if (!response.ok) {
-      const details = await response.text().catch(() => '');
-      throw new Error(`Product seed reconciliation HTTP ${response.status}${details ? `: ${details}` : ''}`);
-    }
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    throw new Error(`Product seed reconciliation HTTP ${response.status}${details ? `: ${details}` : ''}`);
   }
 
-  const refreshed = await fetch('/api/products');
-  if (!refreshed.ok) throw new Error(`Product refresh HTTP ${refreshed.status}`);
-  return normalizeProductResponse(await refreshed.json() as ProductApiResponse);
+  return normalizeProductResponse(await response.json() as ProductApiResponse);
 }
 
 let productServerAvailable = false;
@@ -178,7 +165,6 @@ async function hydrateProductsFromServer(): Promise<void> {
 
       serverProducts = normalizeProductResponse(await syncResponse.json() as ProductApiResponse);
     } else {
-      // Reconcile only missing SKUs. Existing SQL products are never overwritten by startup hydration.
       serverProducts = await createMissingSeedProducts(serverProducts);
     }
 
