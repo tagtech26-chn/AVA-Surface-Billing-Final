@@ -8,6 +8,8 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<Promotion> Promotions => Set<Promotion>();
+    public DbSet<AppUser> AppUsers => Set<AppUser>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
     public DbSet<Payment> Payments => Set<Payment>();
@@ -30,7 +32,12 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.Code).HasMaxLength(50).IsRequired();
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Phone).HasMaxLength(30);
             e.Property(x => x.Gstin).HasMaxLength(15);
+            e.Property(x => x.City).HasMaxLength(100);
+            e.Property(x => x.State).HasMaxLength(100);
+            e.Property(x => x.StateCode).HasMaxLength(10);
+            e.Property(x => x.CustomerType).HasMaxLength(20).IsRequired();
             e.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
             e.HasOne(x => x.Company).WithMany(x => x.Customers).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -55,6 +62,29 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.Property(x => x.WeightPerBoxKg).HasPrecision(18, 3);
             e.HasIndex(x => new { x.CompanyId, x.Sku }).IsUnique();
             e.HasOne(x => x.Company).WithMany(x => x.Products).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Promotion>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(150).IsRequired();
+            e.Property(x => x.DiscountPercent).HasPrecision(5, 2);
+            e.Property(x => x.MaxDiscountPercent).HasPrecision(5, 2);
+            e.Property(x => x.ProductCategory).HasMaxLength(120);
+            e.Property(x => x.CustomerType).HasMaxLength(20);
+            e.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
+            e.HasOne(x => x.Company).WithMany(x => x.Promotions).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AppUser>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UserName).HasMaxLength(100).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(150).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(30).IsRequired();
+            e.HasIndex(x => x.UserName).IsUnique();
+            e.HasOne(x => x.Company).WithMany().HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Invoice>(e =>
