@@ -11,6 +11,7 @@ public sealed class Company
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public ICollection<Customer> Customers { get; set; } = new List<Customer>();
+    public ICollection<Salesperson> Salespersons { get; set; } = new List<Salesperson>();
     public ICollection<Product> Products { get; set; } = new List<Product>();
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
     public ICollection<Promotion> Promotions { get; set; } = new List<Promotion>();
@@ -34,6 +35,19 @@ public sealed class Customer
     public string? StateCode { get; set; }
     public string CustomerType { get; set; } = "B2C";
     public bool IsActive { get; set; } = true;
+}
+
+public sealed class Salesperson
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid CompanyId { get; set; }
+    public Company Company { get; set; } = null!;
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Mobile { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
 }
 
 public sealed class Product
@@ -104,6 +118,8 @@ public sealed class Invoice
     public Company Company { get; set; } = null!;
     public Guid? CustomerId { get; set; }
     public Customer? Customer { get; set; }
+    public Guid? SalespersonId { get; set; }
+    public Salesperson? Salesperson { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
     public DateTime InvoiceDate { get; set; } = DateTime.UtcNow;
     public string SalespersonName { get; set; } = string.Empty;
