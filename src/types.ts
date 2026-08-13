@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'MANAGER' | 'CASHIER' | 'ACCOUNTANT' | 'WAREHOUSE';
+export type UserRole = 'ADMIN' | 'MANAGER' | 'BRANCH_MANAGER' | 'CASHIER' | 'ACCOUNTANT' | 'WAREHOUSE';
 
 export interface UserProfile {
   id: string;
@@ -146,6 +146,7 @@ export interface Invoice {
   branchManagerDiscountPercent?: number;
   branchManagerDiscountAmount?: number;
   branchManagerRemarks?: string;
+  branchManagerUserId?: string;
   manualDiscountAmount: number;
   taxTotal: number;
   cgstAmount?: number;
