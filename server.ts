@@ -3,36 +3,101 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { getEntity, saveEntity } from "./server/db";
+import {
+  INITIAL_PRODUCTS,
+  INITIAL_CUSTOMERS,
+  INITIAL_PROMOS,
+  INITIAL_INVOICES,
+  INITIAL_EXPENSES,
+  INITIAL_USERS,
+  INITIAL_STORE_DETAILS,
+  INITIAL_AUDIT_LOGS
+} from "./src/data/seedData";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
-// Initialize Gemini SDK lazily / safely
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
-    return null;
-  }
+  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") return null;
   return new GoogleGenAI({
     apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
+    httpOptions: { headers: { "User-Agent": "avasurface-billing-system" } }
   });
 }
 
-// Health Check API
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+const entityDefaults: Record<string, unknown> = {
+  products: INITIAL_PRODUCTS,
+  customers: INITIAL_CUSTOMERS,
+  promos: INITIAL_PROMOS,
+  invoices: INITIAL_INVOICES,
+  expenses: INITIAL_EXPENSES,
+  users: INITIAL_USERS,
+  storeDetails: INITIAL_STORE_DETAILS,
+  auditLogs: INITIAL_AUDIT_LOGS,
+  stockLogs: [],
+  drafts: []
+};
+
+const allowedEntities = new Set(Object.keys(entityDefaults));
+
+app.get("/api/health", async (_req, res) => {
+  try {
+    await getEntity("__health__", { initialized: false });
+    res.json({ status: "ok", persistence: "server", database: "sqlite", timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error("Health check failed:", error);
+    res.status(503).json({ status: "error", persistence: "server" });
+  }
 });
 
-// AI Financial & Sales Business Insights API
+// Server-side application data API. The browser UI can migrate entity-by-entity
+// from localStorage without changing the existing business components.
+app.get("/api/data/:entity", async (req, res) => {
+  const { entity } = req.params;
+  if (!allowedEntities.has(entity)) return res.status(404).json({ error: "Unknown entity" });
+
+  try {
+    const data = await getEntity(entity, entityDefaults[entity]);
+    res.json({ entity, data, source: "server" });
+  } catch (error) {
+    console.error(`GET /api/data/${entity} failed:`, error);
+    res.status(500).json({ error: "Unable to load server data" });
+  }
+});
+
+app.put("/api/data/:entity", async (req, res) => {
+  const { entity } = req.params;
+  if (!allowedEntities.has(entity)) return res.status(404).json({ error: "Unknown entity" });
+  if (typeof req.body?.data === "undefined") return res.status(400).json({ error: "Request body must contain data" });
+
+  try {
+    await saveEntity(entity, req.body.data);
+    res.json({ entity, saved: true, source: "server", updatedAt: new Date().toISOString() });
+  } catch (error) {
+    console.error(`PUT /api/data/${entity} failed:`, error);
+    res.status(500).json({ error: "Unable to save server data" });
+  }
+});
+
+app.post("/api/data/bootstrap", async (_req, res) => {
+  try {
+    for (const [entity, data] of Object.entries(entityDefaults)) {
+      const existing = await getEntity(entity, null);
+      if (existing === null) await saveEntity(entity, data);
+    }
+    res.json({ initialized: true, entities: [...allowedEntities], source: "server" });
+  } catch (error) {
+    console.error("Bootstrap failed:", error);
+    res.status(500).json({ error: "Unable to initialize server data" });
+  }
+});
+
 app.post("/api/ai-insights", async (req, res) => {
   const { metrics, inventoryAlerts, salesSummary, requestType } = req.body;
 
@@ -61,102 +126,52 @@ app.post("/api/ai-insights", async (req, res) => {
 
   try {
     const ai = getGeminiClient();
-    if (!ai) {
-      return res.status(200).json(
-        requestType === "promo_generator" ? defaultFallbackPromo : defaultFallbackInsight
-      );
-    }
+    if (!ai) return res.json(requestType === "promo_generator" ? defaultFallbackPromo : defaultFallbackInsight);
 
-    let prompt = "";
-    if (requestType === "promo_generator") {
-      prompt = `You are an expert small business marketing consultant. Given the business inventory & target audience:
-Inventory Context: ${JSON.stringify(inventoryAlerts || [])}
-Business Metrics: ${JSON.stringify(metrics || {})}
+    const prompt = requestType === "promo_generator"
+      ? `You are an expert small business marketing consultant. Given inventory context ${JSON.stringify(inventoryAlerts || [])} and business metrics ${JSON.stringify(metrics || {})}, generate a promotion campaign. Respond as JSON with keys: promoCode, title, discountText, targetCategory, marketingCopy, recommendedMinSpend.`
+      : `You are a CFO and small business growth advisor. Analyze metrics ${JSON.stringify(metrics)}, low stock ${JSON.stringify(inventoryAlerts)}, sales ${JSON.stringify(salesSummary)}. Respond as JSON with keys: insight, recommendations (array of 3 strings), promoIdea ({ code, discount, description }).`;
 
-Generate a creative promotion campaign with:
-1. Catchy Promo Name & Code (e.g. SUMMER15)
-2. Discount Type & Value (e.g. 15% off, $10 off over $50)
-3. Target Products/Categories
-4. Marketing copy for SMS/Email receipt banner.
-
-Respond in structured JSON with keys: promoCode, title, discountText, targetCategory, marketingCopy, recommendedMinSpend.`;
-    } else {
-      prompt = `You are a Chief Financial Officer & Small Business Growth Advisor for a retail/service business.
-Analyze the following store metrics and provide sharp, actionable advice:
-Key Financial Metrics: ${JSON.stringify(metrics)}
-Low Stock Alerts: ${JSON.stringify(inventoryAlerts)}
-Sales Trends: ${JSON.stringify(salesSummary)}
-
-Provide an executive response with:
-1. Executive Summary (2 concise sentences)
-2. 3 High-impact Strategic Recommendations for increasing profit margin or clearing inventory.
-3. A suggested promotional campaign idea.
-
-Respond in JSON format with keys: insight, recommendations (array of 3 strings), promoIdea ({ code, discount, description }).`;
-    }
-
-    // Call Gemini API with automatic retry on 503 / high demand spikes
     let responseText = "";
-    let attempts = 0;
-    const maxAttempts = 2;
-
-    while (attempts < maxAttempts) {
-      attempts++;
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const response = await ai.models.generateContent({
           model: "gemini-3.6-flash",
           contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-          },
+          config: { responseMimeType: "application/json" }
         });
         responseText = response.text || "";
         break;
-      } catch (geminiError: any) {
-        console.warn(`Gemini API attempt ${attempts} failed:`, geminiError?.message || geminiError);
-        if (attempts < maxAttempts) {
-          // Wait 1 second before retry
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        } else {
-          throw geminiError;
-        }
+      } catch (error) {
+        if (attempt === 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
 
-    if (!responseText) {
-      throw new Error("Empty response from Gemini API");
-    }
-
-    const data = JSON.parse(responseText);
-    return res.json(data);
-  } catch (error: any) {
-    console.error("AI Insights API Error (serving graceful fallback):", error?.message || error);
-    // Graceful fallback response when Gemini model is experiencing high demand (503) or unavailable
-    return res.status(200).json(
-      requestType === "promo_generator" ? defaultFallbackPromo : defaultFallbackInsight
-    );
+    if (!responseText) throw new Error("Empty response from Gemini API");
+    return res.json(JSON.parse(responseText));
+  } catch (error) {
+    console.error("AI Insights API Error:", error);
+    return res.json(requestType === "promo_generator" ? defaultFallbackPromo : defaultFallbackInsight);
   }
 });
 
 async function startServer() {
-  // Vite middleware for development vs static build for production
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`BizFlow Server running on http://localhost:${PORT}`);
+    console.log(`AVASurface Billing Server running on http://localhost:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error("Server startup failed:", error);
+  process.exit(1);
+});
