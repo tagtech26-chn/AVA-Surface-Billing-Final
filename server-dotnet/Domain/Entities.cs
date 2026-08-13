@@ -13,6 +13,7 @@ public sealed class Company
     public ICollection<Customer> Customers { get; set; } = new List<Customer>();
     public ICollection<Product> Products { get; set; } = new List<Product>();
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
+    public ICollection<Promotion> Promotions { get; set; } = new List<Promotion>();
 }
 
 public sealed class Customer
@@ -26,6 +27,12 @@ public sealed class Customer
     public string? Email { get; set; }
     public string? Gstin { get; set; }
     public string? Address { get; set; }
+    public string? BillingAddress { get; set; }
+    public string? ShippingAddress { get; set; }
+    public string? City { get; set; }
+    public string? State { get; set; }
+    public string? StateCode { get; set; }
+    public string CustomerType { get; set; } = "B2C";
     public bool IsActive { get; set; } = true;
 }
 
@@ -57,6 +64,37 @@ public sealed class Product
     public decimal? PricePerSqFt { get; set; }
     public decimal? WeightPerBoxKg { get; set; }
     public bool IsActive { get; set; } = true;
+}
+
+public sealed class Promotion
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid CompanyId { get; set; }
+    public Company Company { get; set; } = null!;
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public decimal DiscountPercent { get; set; }
+    public DateTime ValidFrom { get; set; }
+    public DateTime ValidTo { get; set; }
+    public bool IsActive { get; set; } = true;
+    public bool IsCombinable { get; set; } = true;
+    public int Priority { get; set; }
+    public decimal? MaxDiscountPercent { get; set; }
+    public string? ProductCategory { get; set; }
+    public string? CustomerType { get; set; }
+    public string? Remarks { get; set; }
+}
+
+public sealed class AppUser
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? CompanyId { get; set; }
+    public Company? Company { get; set; }
+    public string UserName { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Role { get; set; } = "BILLING_USER";
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
 public sealed class Invoice
