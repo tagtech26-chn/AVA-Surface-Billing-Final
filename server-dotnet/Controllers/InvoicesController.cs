@@ -83,21 +83,16 @@ public sealed class InvoicesController(BillingDbContext db) : ControllerBase
                 return BadRequest("A valid GSTIN is required for B2B customers.");
         }
 
-        Salesperson? salesperson = null;
-        if (request.SalespersonId.HasValue)
-        {
-            salesperson = await db.Salespersons.FirstOrDefaultAsync(
-                x => x.Id == request.SalespersonId.Value &&
-                     x.CompanyId == request.CompanyId &&
-                     x.IsActive,
-                cancellationToken);
+        var salesperson = await db.Salespersons.FirstOrDefaultAsync(
+            x => x.Id == request.SalespersonId &&
+                 x.CompanyId == request.CompanyId &&
+                 x.IsActive,
+            cancellationToken);
 
-            if (salesperson is null)
-                return BadRequest("Selected salesperson is invalid or inactive.");
-        }
+        if (salesperson is null)
+            return BadRequest("Selected salesperson is invalid or inactive.");
 
-        if (salesperson is null ||
-            string.IsNullOrWhiteSpace(salesperson.Name) ||
+        if (string.IsNullOrWhiteSpace(salesperson.Name) ||
             !Regex.IsMatch(salesperson.Mobile, "^[6-9][0-9]{9}$"))
             return BadRequest("A valid salesperson with name and 10-digit mobile number is required.");
 
