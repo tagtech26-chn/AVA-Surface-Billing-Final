@@ -36,18 +36,10 @@ const KEYS = {
 };
 
 type ServerEntity = keyof typeof KEYS;
-const ENTITY_NAMES: Record<ServerEntity, string> = {
-  PRODUCTS: 'products',
-  CUSTOMERS: 'customers',
-  PROMOS: 'promos',
-  INVOICES: 'invoices',
-  EXPENSES: 'expenses',
-  USERS: 'users',
-  ACTIVE_USER_ID: 'activeUserId',
-  STORE_DETAILS: 'storeDetails',
-  STOCK_LOGS: 'stockLogs',
-  DRAFTS: 'drafts',
-  AUDIT_LOGS: 'auditLogs'
+const ENTITY_NAMES: Partial<Record<ServerEntity, string>> = {
+  PRODUCTS: 'products', CUSTOMERS: 'customers', PROMOS: 'promos', INVOICES: 'invoices',
+  EXPENSES: 'expenses', USERS: 'users', STORE_DETAILS: 'storeDetails', STOCK_LOGS: 'stockLogs',
+  DRAFTS: 'drafts', AUDIT_LOGS: 'auditLogs'
 };
 
 let serverHydrated = false;
@@ -72,8 +64,9 @@ function setStorageItem<T>(key: string, value: T): void {
 }
 
 function syncEntity<T>(entity: ServerEntity, value: T): void {
-  if (!serverHydrated || !serverAvailable || entity === 'ACTIVE_USER_ID') return;
   const name = ENTITY_NAMES[entity];
+  if (!serverHydrated || !serverAvailable || !name) return;
+
   void fetch(`/api/data/${name}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -97,50 +90,50 @@ async function fetchEntity<T>(name: string, fallback: T): Promise<T> {
   }
 }
 
-export const Storage = {
-  async hydrateFromServer(): Promise<{
-    products: Product[];
-    customers: Customer[];
-    promos: PromoRule[];
-    invoices: Invoice[];
-    expenses: Expense[];
-    users: UserProfile[];
-    storeDetails: BusinessStoreDetails;
-    stockLogs: StockAdjustment[];
-    drafts: DraftBill[];
-    auditLogs: AuditLog[];
-  }> {
-    try {
-      const [products, customers, promos, invoices, expenses, users, storeDetails, stockLogs, drafts, auditLogs] = await Promise.all([
-        fetchEntity('products', INITIAL_PRODUCTS),
-        fetchEntity('customers', INITIAL_CUSTOMERS),
-        fetchEntity('promos', INITIAL_PROMOS),
-        fetchEntity('invoices', INITIAL_INVOICES),
-        fetchEntity('expenses', INITIAL_EXPENSES),
-        fetchEntity('users', INITIAL_USERS),
-        fetchEntity('storeDetails', INITIAL_STORE_DETAILS),
-        fetchEntity<StockAdjustment[]>('stockLogs', []),
-        fetchEntity<DraftBill[]>('drafts', []),
-        fetchEntity('auditLogs', INITIAL_AUDIT_LOGS)
-      ]);
+async function hydrateServerCache(): Promise<void> {
+  if (typeof window === 'undefined' || sessionStorage.getItem('avasurface_server_hydrated') === '1') return;
 
-      serverHydrated = serverAvailable;
-      return { products, customers, promos, invoices, expenses, users, storeDetails, stockLogs, drafts, auditLogs };
-    } catch (error) {
-      console.error('Server hydration failed:', error);
-      return {
-        products: INITIAL_PRODUCTS,
-        customers: INITIAL_CUSTOMERS,
-        promos: INITIAL_PROMOS,
-        invoices: INITIAL_INVOICES,
-        expenses: INITIAL_EXPENSES,
-        users: INITIAL_USERS,
-        storeDetails: INITIAL_STORE_DETAILS,
-        stockLogs: [],
-        drafts: [],
-        auditLogs: INITIAL_AUDIT_LOGS
-      };
-    }
+  try {
+    const [products, customers, promos, invoices, expenses, users, storeDetails, stockLogs, drafts, auditLogs] = await Promise.all([
+      fetchEntity('products', INITIAL_PRODUCTS),
+      fetchEntity('customers', INITIAL_CUSTOMERS),
+      fetchEntity('promos', INITIAL_PROMOS),
+      fetchEntity('invoices', INITIAL_INVOICES),
+      fetchEntity('expenses', INITIAL_EXPENSES),
+      fetchEntity('users', INITIAL_USERS),
+      fetchEntity('storeDetails', INITIAL_STORE_DETAILS),
+      fetchEntity<StockAdjustment[]>('stockLogs', []),
+      fetchEntity<DraftBill[]>('drafts', []),
+      fetchEntity('auditLogs', INITIAL_AUDIT_LOGS)
+    ]);
+
+    if (!serverAvailable) return;
+
+    setStorageItem(KEYS.PRODUCTS, products);
+    setStorageItem(KEYS.CUSTOMERS, customers);
+    setStorageItem(KEYS.PROMOS, promos);
+    setStorageItem(KEYS.INVOICES, invoices);
+    setStorageItem(KEYS.EXPENSES, expenses);
+    setStorageItem(KEYS.USERS, users);
+    setStorageItem(KEYS.STORE_DETAILS, storeDetails);
+    setStorageItem(KEYS.STOCK_LOGS, stockLogs);
+    setStorageItem(KEYS.DRAFTS, drafts);
+    setStorageItem(KEYS.AUDIT_LOGS, auditLogs);
+
+    serverHydrated = true;
+    sessionStorage.setItem('avasurface_server_hydrated', '1');
+
+    // The first load may have rendered cached/demo data. Reload once so React
+    // initializes from the server snapshot without requiring a broad UI rewrite.
+    if (window.location.pathname !== '/health') window.location.reload();
+  } catch (error) {
+    console.warn('Server hydration skipped:', error);
+  }
+}
+
+export const Storage = {
+  async hydrateFromServer(): Promise<void> {
+    await hydrateServerCache();
   },
 
   getProducts(): Product[] { return getStorageItem<Product[]>(KEYS.PRODUCTS, INITIAL_PRODUCTS); },
@@ -178,6 +171,10 @@ export const Storage = {
 
   resetToDefaultSeed(): void {
     Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
+    sessionStorage.removeItem('avasurface_server_hydrated');
     void fetch('/api/data/bootstrap', { method: 'POST' }).catch(() => undefined);
   }
 };
+
+// Start server hydration as soon as the browser loads the data layer.
+void hydrateServerCache();
