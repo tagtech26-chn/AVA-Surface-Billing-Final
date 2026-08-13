@@ -1,0 +1,6 @@
+{
+  "name": "BizFlow Billing & Financial Suite",
+  "description": "Comprehensive billing system with user control, inventory management, discount promo engine, and financial analytics dashboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
