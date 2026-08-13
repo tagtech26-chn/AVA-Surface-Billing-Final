@@ -35,6 +35,24 @@ const KEYS = {
   AUDIT_LOGS: 'bizflow_audit_logs_v1'
 };
 
+type ServerEntity = keyof typeof KEYS;
+const ENTITY_NAMES: Record<ServerEntity, string> = {
+  PRODUCTS: 'products',
+  CUSTOMERS: 'customers',
+  PROMOS: 'promos',
+  INVOICES: 'invoices',
+  EXPENSES: 'expenses',
+  USERS: 'users',
+  ACTIVE_USER_ID: 'activeUserId',
+  STORE_DETAILS: 'storeDetails',
+  STOCK_LOGS: 'stockLogs',
+  DRAFTS: 'drafts',
+  AUDIT_LOGS: 'auditLogs'
+};
+
+let serverHydrated = false;
+let serverAvailable = true;
+
 function getStorageItem<T>(key: string, defaultValue: T): T {
   try {
     const item = localStorage.getItem(key);
@@ -53,95 +71,113 @@ function setStorageItem<T>(key: string, value: T): void {
   }
 }
 
+function syncEntity<T>(entity: ServerEntity, value: T): void {
+  if (!serverHydrated || !serverAvailable || entity === 'ACTIVE_USER_ID') return;
+  const name = ENTITY_NAMES[entity];
+  void fetch(`/api/data/${name}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: value })
+  }).catch((error) => {
+    serverAvailable = false;
+    console.error(`Server sync failed for ${name}:`, error);
+  });
+}
+
+async function fetchEntity<T>(name: string, fallback: T): Promise<T> {
+  try {
+    const response = await fetch(`/api/data/${name}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json() as { data: T };
+    return payload.data;
+  } catch (error) {
+    serverAvailable = false;
+    console.warn(`Server data unavailable for ${name}; using local cache.`, error);
+    return fallback;
+  }
+}
+
 export const Storage = {
-  getProducts(): Product[] {
-    return getStorageItem<Product[]>(KEYS.PRODUCTS, INITIAL_PRODUCTS);
-  },
-  saveProducts(products: Product[]): void {
-    setStorageItem(KEYS.PRODUCTS, products);
+  async hydrateFromServer(): Promise<{
+    products: Product[];
+    customers: Customer[];
+    promos: PromoRule[];
+    invoices: Invoice[];
+    expenses: Expense[];
+    users: UserProfile[];
+    storeDetails: BusinessStoreDetails;
+    stockLogs: StockAdjustment[];
+    drafts: DraftBill[];
+    auditLogs: AuditLog[];
+  }> {
+    try {
+      const [products, customers, promos, invoices, expenses, users, storeDetails, stockLogs, drafts, auditLogs] = await Promise.all([
+        fetchEntity('products', INITIAL_PRODUCTS),
+        fetchEntity('customers', INITIAL_CUSTOMERS),
+        fetchEntity('promos', INITIAL_PROMOS),
+        fetchEntity('invoices', INITIAL_INVOICES),
+        fetchEntity('expenses', INITIAL_EXPENSES),
+        fetchEntity('users', INITIAL_USERS),
+        fetchEntity('storeDetails', INITIAL_STORE_DETAILS),
+        fetchEntity<StockAdjustment[]>('stockLogs', []),
+        fetchEntity<DraftBill[]>('drafts', []),
+        fetchEntity('auditLogs', INITIAL_AUDIT_LOGS)
+      ]);
+
+      serverHydrated = serverAvailable;
+      return { products, customers, promos, invoices, expenses, users, storeDetails, stockLogs, drafts, auditLogs };
+    } catch (error) {
+      console.error('Server hydration failed:', error);
+      return {
+        products: INITIAL_PRODUCTS,
+        customers: INITIAL_CUSTOMERS,
+        promos: INITIAL_PROMOS,
+        invoices: INITIAL_INVOICES,
+        expenses: INITIAL_EXPENSES,
+        users: INITIAL_USERS,
+        storeDetails: INITIAL_STORE_DETAILS,
+        stockLogs: [],
+        drafts: [],
+        auditLogs: INITIAL_AUDIT_LOGS
+      };
+    }
   },
 
-  getCustomers(): Customer[] {
-    return getStorageItem<Customer[]>(KEYS.CUSTOMERS, INITIAL_CUSTOMERS);
-  },
-  saveCustomers(customers: Customer[]): void {
-    setStorageItem(KEYS.CUSTOMERS, customers);
-  },
+  getProducts(): Product[] { return getStorageItem<Product[]>(KEYS.PRODUCTS, INITIAL_PRODUCTS); },
+  saveProducts(products: Product[]): void { setStorageItem(KEYS.PRODUCTS, products); syncEntity('PRODUCTS', products); },
 
-  getPromos(): PromoRule[] {
-    return getStorageItem<PromoRule[]>(KEYS.PROMOS, INITIAL_PROMOS);
-  },
-  savePromos(promos: PromoRule[]): void {
-    setStorageItem(KEYS.PROMOS, promos);
-  },
+  getCustomers(): Customer[] { return getStorageItem<Customer[]>(KEYS.CUSTOMERS, INITIAL_CUSTOMERS); },
+  saveCustomers(customers: Customer[]): void { setStorageItem(KEYS.CUSTOMERS, customers); syncEntity('CUSTOMERS', customers); },
 
-  getInvoices(): Invoice[] {
-    return getStorageItem<Invoice[]>(KEYS.INVOICES, INITIAL_INVOICES);
-  },
-  saveInvoices(invoices: Invoice[]): void {
-    setStorageItem(KEYS.INVOICES, invoices);
-  },
+  getPromos(): PromoRule[] { return getStorageItem<PromoRule[]>(KEYS.PROMOS, INITIAL_PROMOS); },
+  savePromos(promos: PromoRule[]): void { setStorageItem(KEYS.PROMOS, promos); syncEntity('PROMOS', promos); },
 
-  getExpenses(): Expense[] {
-    return getStorageItem<Expense[]>(KEYS.EXPENSES, INITIAL_EXPENSES);
-  },
-  saveExpenses(expenses: Expense[]): void {
-    setStorageItem(KEYS.EXPENSES, expenses);
-  },
+  getInvoices(): Invoice[] { return getStorageItem<Invoice[]>(KEYS.INVOICES, INITIAL_INVOICES); },
+  saveInvoices(invoices: Invoice[]): void { setStorageItem(KEYS.INVOICES, invoices); syncEntity('INVOICES', invoices); },
 
-  getUsers(): UserProfile[] {
-    return getStorageItem<UserProfile[]>(KEYS.USERS, INITIAL_USERS);
-  },
-  saveUsers(users: UserProfile[]): void {
-    setStorageItem(KEYS.USERS, users);
-  },
+  getExpenses(): Expense[] { return getStorageItem<Expense[]>(KEYS.EXPENSES, INITIAL_EXPENSES); },
+  saveExpenses(expenses: Expense[]): void { setStorageItem(KEYS.EXPENSES, expenses); syncEntity('EXPENSES', expenses); },
 
-  getActiveUserId(): string {
-    return getStorageItem<string>(KEYS.ACTIVE_USER_ID, INITIAL_USERS[0].id);
-  },
-  saveActiveUserId(id: string): void {
-    setStorageItem(KEYS.ACTIVE_USER_ID, id);
-  },
+  getUsers(): UserProfile[] { return getStorageItem<UserProfile[]>(KEYS.USERS, INITIAL_USERS); },
+  saveUsers(users: UserProfile[]): void { setStorageItem(KEYS.USERS, users); syncEntity('USERS', users); },
 
-  getStoreDetails(): BusinessStoreDetails {
-    return getStorageItem<BusinessStoreDetails>(KEYS.STORE_DETAILS, INITIAL_STORE_DETAILS);
-  },
-  saveStoreDetails(details: BusinessStoreDetails): void {
-    setStorageItem(KEYS.STORE_DETAILS, details);
-  },
+  getActiveUserId(): string { return getStorageItem<string>(KEYS.ACTIVE_USER_ID, INITIAL_USERS[0].id); },
+  saveActiveUserId(id: string): void { setStorageItem(KEYS.ACTIVE_USER_ID, id); },
 
-  getStockLogs(): StockAdjustment[] {
-    return getStorageItem<StockAdjustment[]>(KEYS.STOCK_LOGS, []);
-  },
-  saveStockLogs(logs: StockAdjustment[]): void {
-    setStorageItem(KEYS.STOCK_LOGS, logs);
-  },
+  getStoreDetails(): BusinessStoreDetails { return getStorageItem<BusinessStoreDetails>(KEYS.STORE_DETAILS, INITIAL_STORE_DETAILS); },
+  saveStoreDetails(details: BusinessStoreDetails): void { setStorageItem(KEYS.STORE_DETAILS, details); syncEntity('STORE_DETAILS', details); },
 
-  getDrafts(): DraftBill[] {
-    return getStorageItem<DraftBill[]>(KEYS.DRAFTS, []);
-  },
-  saveDrafts(drafts: DraftBill[]): void {
-    setStorageItem(KEYS.DRAFTS, drafts);
-  },
+  getStockLogs(): StockAdjustment[] { return getStorageItem<StockAdjustment[]>(KEYS.STOCK_LOGS, []); },
+  saveStockLogs(logs: StockAdjustment[]): void { setStorageItem(KEYS.STOCK_LOGS, logs); syncEntity('STOCK_LOGS', logs); },
 
-  getAuditLogs(): AuditLog[] {
-    return getStorageItem<AuditLog[]>(KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS);
-  },
-  saveAuditLogs(logs: AuditLog[]): void {
-    setStorageItem(KEYS.AUDIT_LOGS, logs);
-  },
+  getDrafts(): DraftBill[] { return getStorageItem<DraftBill[]>(KEYS.DRAFTS, []); },
+  saveDrafts(drafts: DraftBill[]): void { setStorageItem(KEYS.DRAFTS, drafts); syncEntity('DRAFTS', drafts); },
+
+  getAuditLogs(): AuditLog[] { return getStorageItem<AuditLog[]>(KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS); },
+  saveAuditLogs(logs: AuditLog[]): void { setStorageItem(KEYS.AUDIT_LOGS, logs); syncEntity('AUDIT_LOGS', logs); },
 
   resetToDefaultSeed(): void {
-    localStorage.removeItem(KEYS.PRODUCTS);
-    localStorage.removeItem(KEYS.CUSTOMERS);
-    localStorage.removeItem(KEYS.PROMOS);
-    localStorage.removeItem(KEYS.INVOICES);
-    localStorage.removeItem(KEYS.EXPENSES);
-    localStorage.removeItem(KEYS.USERS);
-    localStorage.removeItem(KEYS.ACTIVE_USER_ID);
-    localStorage.removeItem(KEYS.STORE_DETAILS);
-    localStorage.removeItem(KEYS.STOCK_LOGS);
-    localStorage.removeItem(KEYS.DRAFTS);
-    localStorage.removeItem(KEYS.AUDIT_LOGS);
+    Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
+    void fetch('/api/data/bootstrap', { method: 'POST' }).catch(() => undefined);
   }
 };
