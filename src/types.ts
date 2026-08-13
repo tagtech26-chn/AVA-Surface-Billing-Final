@@ -95,6 +95,7 @@ export interface CartItem {
   selectedUnit?: TileQtyUnit;
   itemWeightKg?: number;
   discountAmount: number;
+  discountPercent?: number;
   finalUnitPrice: number;
   totalPrice: number;
 }
@@ -134,16 +135,23 @@ export interface Invoice {
   customer?: Customer;
   cashierName: string;
   cashierRole: UserRole;
+  salespersonName?: string;
+  salespersonMobile?: string;
   items: CartItem[];
   subtotal: number;
   itemDiscountsTotal: number;
   promoCodeApplied?: string;
+  promoDiscountPercent?: number;
   promoDiscountAmount: number;
+  branchManagerDiscountPercent?: number;
+  branchManagerDiscountAmount?: number;
+  branchManagerRemarks?: string;
   manualDiscountAmount: number;
   taxTotal: number;
   cgstAmount?: number;
   sgstAmount?: number;
   igstAmount?: number;
+  roundOffAmount?: number;
   grandTotal: number;
   amountPaid: number;
   changeGiven: number;
@@ -194,6 +202,8 @@ export interface BusinessStoreDetails {
   receiptHeader: string;
   receiptFooter: string;
   upiId?: string;
+  pan?: string;
+  cin?: string;
 }
 
 export type AuditCategory = 'PRODUCT' | 'INVOICE' | 'USER' | 'PROMO' | 'STOCK' | 'SYSTEM';
