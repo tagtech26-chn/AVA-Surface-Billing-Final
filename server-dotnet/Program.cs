@@ -1,7 +1,17 @@
 using AVASurface.Server.Infrastructure;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// The existing AVASurface frontend performs a one-time catalog synchronization.
+// Allow large local development payloads to arrive without Kestrel's default
+// minimum request-body data-rate terminating the migration request.
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 50 * 1024 * 1024;
+    options.Limits.MinRequestBodyDataRate = null;
+});
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
