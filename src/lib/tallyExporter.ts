@@ -11,26 +11,26 @@ export const DEFAULT_TALLY_MAPPING: TallyLedgerMapping = {
   companyName: 'BizFlow Store'
 };
 
-/**
- * Formats YYYY-MM-DD string into Tally XML YYYYMMDD format
- */
-function formatTallyDate(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}${month}${day}`;
-  } catch {
-    return '20260101';
-  }
+interface TaxBreakdown {
+  cgst: number;
+  sgst: number;
+  igst: number;
 }
 
-/**
- * Escapes XML special characters
- */
-function escapeXml(unsafe: string): string {
-  return unsafe
+function formatTallyDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`Invalid invoice date: ${dateStr}`);
+  }
+
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+}
+
+function escapeXml(value: string): string {
+  return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -38,9 +38,54 @@ function escapeXml(unsafe: string): string {
     .replace(/'/g, '&apos;');
 }
 
-/**
- * Generates Tally ERP XML string for Sales Invoices
- */
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function getTaxBreakdown(invoice: Invoice): TaxBreakdown {
+  const taxTotal = roundMoney(invoice.taxTotal || 0);
+  const cgst = roundMoney(invoice.cgstAmount || 0);
+  const sgst = roundMoney(invoice.sgstAmount || 0);
+  const igst = roundMoney(invoice.igstAmount || 0);
+  const breakdownTotal = roundMoney(cgst + sgst + igst);
+
+  if (taxTotal === 0) {
+    return { cgst: 0, sgst: 0, igst: 0 };
+  }
+
+  if (breakdownTotal !== taxTotal) {
+    throw new Error(
+      `Invoice ${invoice.invoiceNumber}: tax breakdown is missing or does not equal taxTotal. ` +
+      'Set cgstAmount/sgstAmount/igstAmount before exporting to Tally.'
+    );
+  }
+
+  return { cgst, sgst, igst };
+}
+
+function buildTaxLedgerXml(tax: TaxBreakdown, mapping: TallyLedgerMapping): string {
+  const entries: string[] = [];
+
+  const addEntry = (ledgerName: string, amount: number) => {
+    if (amount <= 0) return;
+    entries.push(`
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>${escapeXml(ledgerName)}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>NO</ISDEEMEDPOSITIVE>
+              <LEDGERFROMITEM>NO</LEDGERFROMITEM>
+              <REMOVEZEROENTRIES>NO</REMOVEZEROENTRIES>
+              <AMOUNT>${amount.toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>`);
+  };
+
+  addEntry(mapping.cgstLedger, tax.cgst);
+  addEntry(mapping.sgstLedger, tax.sgst);
+  addEntry(mapping.igstLedger, tax.igst);
+
+  return entries.join('');
+}
+
+/** Generates a Tally Prime Sales voucher XML payload. */
 export function generateTallySalesXml(
   invoices: Invoice[],
   mapping: TallyLedgerMapping = DEFAULT_TALLY_MAPPING
@@ -51,11 +96,13 @@ export function generateTallySalesXml(
     const dateFormatted = formatTallyDate(inv.date);
     const partyName = escapeXml(inv.customer?.name || 'Cash Customer');
     const invNumber = escapeXml(inv.invoiceNumber);
-    const totalAmount = inv.grandTotal;
-    const subtotal = inv.subtotal - inv.promoDiscountAmount - inv.manualDiscountAmount;
-    const taxTotal = inv.taxTotal;
+    const narration = escapeXml(
+      `POS Invoice ${inv.invoiceNumber} generated via BizFlow. Payment method: ${inv.paymentMethod}`
+    );
+    const totalAmount = roundMoney(inv.grandTotal);
+    const subtotal = roundMoney(inv.subtotal - inv.promoDiscountAmount - inv.manualDiscountAmount);
+    const tax = getTaxBreakdown(inv);
 
-    // Party entry (Debit for sales) -> In Tally XML, Debit amounts are negative in ALLLEDGERENTRIES
     const partyLedgerXml = `
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${partyName}</LEDGERNAME>
@@ -65,7 +112,6 @@ export function generateTallySalesXml(
               <AMOUNT>-${totalAmount.toFixed(2)}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>`;
 
-    // Sales ledger entry (Credit)
     const salesLedgerXml = `
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${escapeXml(mapping.salesLedger)}</LEDGERNAME>
@@ -75,25 +121,14 @@ export function generateTallySalesXml(
               <AMOUNT>${subtotal.toFixed(2)}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>`;
 
-    // Tax ledger entry (Credit)
-    const taxLedgerXml = taxTotal > 0 ? `
-            <ALLLEDGERENTRIES.LIST>
-              <LEDGERNAME>${escapeXml(mapping.cgstLedger)}</LEDGERNAME>
-              <ISDEEMEDPOSITIVE>NO</ISDEEMEDPOSITIVE>
-              <LEDGERFROMITEM>NO</LEDGERFROMITEM>
-              <REMOVEZEROENTRIES>NO</REMOVEZEROENTRIES>
-              <AMOUNT>${taxTotal.toFixed(2)}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>` : '';
-
-    // Inventory Entries XML
     const inventoryXml = inv.items.map((item) => `
             <ALLINVENTORYENTRIES.LIST>
               <STOCKITEMNAME>${escapeXml(item.product.name)}</STOCKITEMNAME>
               <ISDEEMEDPOSITIVE>NO</ISDEEMEDPOSITIVE>
-              <RATE>${item.finalUnitPrice.toFixed(2)}/${item.product.unit || 'pcs'}</RATE>
+              <RATE>${item.finalUnitPrice.toFixed(2)}/${escapeXml(item.product.unit || 'pcs')}</RATE>
               <AMOUNT>${item.totalPrice.toFixed(2)}</AMOUNT>
-              <ACTUALQTY>${item.quantity} ${item.product.unit || 'pcs'}</ACTUALQTY>
-              <BILLEDQTY>${item.quantity} ${item.product.unit || 'pcs'}</BILLEDQTY>
+              <ACTUALQTY>${item.quantity} ${escapeXml(item.product.unit || 'pcs')}</ACTUALQTY>
+              <BILLEDQTY>${item.quantity} ${escapeXml(item.product.unit || 'pcs')}</BILLEDQTY>
             </ALLINVENTORYENTRIES.LIST>`).join('');
 
     return `
@@ -103,12 +138,12 @@ export function generateTallySalesXml(
               <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
               <VOUCHERNUMBER>${invNumber}</VOUCHERNUMBER>
               <PARTYLEDGERNAME>${partyName}</PARTYLEDGERNAME>
-              <NARRATION>POS Invoice ${invNumber} generated via BizFlow. Payment method: ${inv.paymentMethod}</NARRATION>
+              <NARRATION>${narration}</NARRATION>
               <FBTPAYMENTTYPE>Default</FBTPAYMENTTYPE>
               <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>
               ${partyLedgerXml}
               ${salesLedgerXml}
-              ${taxLedgerXml}
+              ${buildTaxLedgerXml(tax, mapping)}
               ${inventoryXml}
             </VOUCHER>
           </TALLYMESSAGE>`;
@@ -135,9 +170,7 @@ export function generateTallySalesXml(
 </ENVELOPE>`;
 }
 
-/**
- * Generates Tally ERP XML string for Expense / Purchase Vouchers
- */
+/** Generates a Tally Prime Payment voucher XML payload for expenses. */
 export function generateTallyExpenseXml(
   expenses: Expense[],
   mapping: TallyLedgerMapping = DEFAULT_TALLY_MAPPING
@@ -148,8 +181,11 @@ export function generateTallyExpenseXml(
     const dateFormatted = formatTallyDate(exp.date);
     const expTitle = escapeXml(exp.title);
     const paidTo = escapeXml(exp.paidTo || 'Cash Expense Vendor');
-    const amount = exp.amount;
+    const amount = roundMoney(exp.amount);
     const recNo = escapeXml(exp.receiptNumber || `EXP-${exp.id}`);
+    const narration = escapeXml(
+      `Expense Payment: ${exp.title}. Category: ${exp.category}. Recorded by: ${exp.recordedBy}`
+    );
 
     return `
           <TALLYMESSAGE xmlns:UDF="TallyUDF">
@@ -158,7 +194,7 @@ export function generateTallyExpenseXml(
               <VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>
               <VOUCHERNUMBER>${recNo}</VOUCHERNUMBER>
               <PARTYLEDGERNAME>${paidTo}</PARTYLEDGERNAME>
-              <NARRATION>Expense Payment: ${expTitle}. Category: ${exp.category}. Recorded by: ${escapeXml(exp.recordedBy)}</NARRATION>
+              <NARRATION>${narration}</NARRATION>
               <ALLLEDGERENTRIES.LIST>
                 <LEDGERNAME>${expTitle}</LEDGERNAME>
                 <ISDEEMEDPOSITIVE>YES</ISDEEMEDPOSITIVE>
@@ -194,9 +230,7 @@ export function generateTallyExpenseXml(
 </ENVELOPE>`;
 }
 
-/**
- * Generates Tally Prime JSON export payload
- */
+/** Generates a structured export payload without inventing GST or HSN values. */
 export function generateTallyJsonExport(
   invoices: Invoice[],
   expenses: Expense[],
@@ -215,50 +249,52 @@ export function generateTallyJsonExport(
       totalStockMasters: products.length
     },
     ledgerMappings: mapping,
-    salesVouchers: invoices.map((inv) => ({
-      voucherType: 'Sales',
-      voucherNumber: inv.invoiceNumber,
-      date: inv.date.split('T')[0],
-      partyLedgerName: inv.customer?.name || 'Cash Sales Customer',
-      customerTaxId: inv.customer?.taxNumber || '',
-      grossTotal: inv.grandTotal,
-      subtotal: inv.subtotal,
-      taxTotal: inv.taxTotal,
-      discountTotal: inv.promoDiscountAmount + inv.manualDiscountAmount + inv.itemDiscountsTotal,
-      paymentStatus: inv.status,
-      paymentMethod: inv.paymentMethod,
-      narration: `BizFlow Sales Invoice ${inv.invoiceNumber} rendered by ${inv.cashierName}`,
-      ewayBillNo: inv.ewayBillNo || null,
-      irnNo: inv.irnNo || null,
-      ledgerEntries: [
-        {
-          ledgerName: inv.customer?.name || 'Cash Sales Customer',
-          ledgerGroup: mapping.debtorsGroup,
-          amount: inv.grandTotal,
-          type: 'DEBIT'
-        },
-        {
-          ledgerName: mapping.salesLedger,
-          amount: inv.subtotal - (inv.promoDiscountAmount + inv.manualDiscountAmount),
-          type: 'CREDIT'
-        },
-        {
-          ledgerName: mapping.cgstLedger,
-          amount: inv.taxTotal,
-          type: 'CREDIT'
-        }
-      ],
-      inventoryEntries: inv.items.map((item) => ({
-        stockItemName: item.product.name,
-        sku: item.product.sku,
-        hsnCode: '8523', // default electronics HSN
-        quantity: item.quantity,
-        rate: item.finalUnitPrice,
-        unit: item.product.unit || 'pcs',
-        amount: item.totalPrice,
-        taxRate: item.product.taxRate
-      }))
-    })),
+    salesVouchers: invoices.map((inv) => {
+      const tax = getTaxBreakdown(inv);
+      return {
+        voucherType: 'Sales',
+        voucherNumber: inv.invoiceNumber,
+        date: inv.date.split('T')[0],
+        partyLedgerName: inv.customer?.name || 'Cash Sales Customer',
+        customerTaxId: inv.customer?.taxNumber || '',
+        grossTotal: inv.grandTotal,
+        subtotal: inv.subtotal,
+        taxTotal: inv.taxTotal,
+        taxBreakdown: tax,
+        discountTotal: inv.promoDiscountAmount + inv.manualDiscountAmount + inv.itemDiscountsTotal,
+        paymentStatus: inv.status,
+        paymentMethod: inv.paymentMethod,
+        narration: `BizFlow Sales Invoice ${inv.invoiceNumber} rendered by ${inv.cashierName}`,
+        ewayBillNo: inv.ewayBillNo || null,
+        irnNo: inv.irnNo || null,
+        ledgerEntries: [
+          {
+            ledgerName: inv.customer?.name || 'Cash Sales Customer',
+            ledgerGroup: mapping.debtorsGroup,
+            amount: inv.grandTotal,
+            type: 'DEBIT'
+          },
+          {
+            ledgerName: mapping.salesLedger,
+            amount: inv.subtotal - (inv.promoDiscountAmount + inv.manualDiscountAmount),
+            type: 'CREDIT'
+          },
+          ...(tax.cgst > 0 ? [{ ledgerName: mapping.cgstLedger, amount: tax.cgst, type: 'CREDIT' }] : []),
+          ...(tax.sgst > 0 ? [{ ledgerName: mapping.sgstLedger, amount: tax.sgst, type: 'CREDIT' }] : []),
+          ...(tax.igst > 0 ? [{ ledgerName: mapping.igstLedger, amount: tax.igst, type: 'CREDIT' }] : [])
+        ],
+        inventoryEntries: inv.items.map((item) => ({
+          stockItemName: item.product.name,
+          sku: item.product.sku,
+          hsnCode: item.product.hsnCode || '',
+          quantity: item.quantity,
+          rate: item.finalUnitPrice,
+          unit: item.product.unit || 'pcs',
+          amount: item.totalPrice,
+          taxRate: item.product.taxRate
+        }))
+      };
+    }),
     expenseVouchers: expenses.map((exp) => ({
       voucherType: 'Payment',
       voucherNumber: exp.receiptNumber || `EXP-${exp.id}`,
@@ -269,11 +305,7 @@ export function generateTallyJsonExport(
       paymentMethod: exp.paymentMethod,
       narration: exp.title,
       ledgerEntries: [
-        {
-          ledgerName: exp.title,
-          amount: exp.amount,
-          type: 'DEBIT'
-        },
+        { ledgerName: exp.title, amount: exp.amount, type: 'DEBIT' },
         {
           ledgerName: exp.paymentMethod === 'BANK_TRANSFER' ? mapping.bankLedger : mapping.cashLedger,
           amount: exp.amount,
@@ -287,6 +319,7 @@ export function generateTallyJsonExport(
       barcode: prod.barcode,
       category: prod.category,
       baseUnit: prod.unit,
+      hsnCode: prod.hsnCode || '',
       costPrice: prod.costPrice,
       sellingPrice: prod.sellingPrice,
       currentStock: prod.stock,
@@ -304,9 +337,6 @@ export function generateTallyJsonExport(
   };
 }
 
-/**
- * Triggers browser file download for text/XML or JSON files
- */
 export function downloadFile(content: string, filename: string, mimeType: string): void {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
