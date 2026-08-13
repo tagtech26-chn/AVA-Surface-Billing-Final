@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
   pull_request:
     branches: [main]
 
@@ -12,11 +12,22 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore .NET backend
+        run: dotnet restore server-dotnet/AVASurface.Server.csproj
+
+      - name: Build .NET backend
+        run: dotnet build server-dotnet/AVASurface.Server.csproj --configuration Release --no-restore
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,11 +35,11 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: npm install
 
       - name: TypeScript validation
         run: npm run lint
 
-      - name: Production build
+      - name: Frontend production build
         run: npm run build
