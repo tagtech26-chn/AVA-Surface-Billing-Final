@@ -7,6 +7,7 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
 {
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<Salesperson> Salespersons => Set<Salesperson>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Promotion> Promotions => Set<Promotion>();
     public DbSet<AppUser> AppUsers => Set<AppUser>();
@@ -40,6 +41,16 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.Property(x => x.CustomerType).HasMaxLength(20).IsRequired();
             e.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
             e.HasOne(x => x.Company).WithMany(x => x.Customers).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Salesperson>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(150).IsRequired();
+            e.Property(x => x.Mobile).HasMaxLength(15).IsRequired();
+            e.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
+            e.HasOne(x => x.Company).WithMany(x => x.Salespersons).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Product>(e =>
@@ -91,6 +102,8 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.InvoiceNumber).HasMaxLength(50).IsRequired();
+            e.Property(x => x.SalespersonName).HasMaxLength(150).IsRequired();
+            e.Property(x => x.SalespersonMobile).HasMaxLength(15).IsRequired();
             e.Property(x => x.SubTotal).HasPrecision(18, 2);
             e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
             e.Property(x => x.TaxableAmount).HasPrecision(18, 2);
@@ -102,6 +115,7 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.HasIndex(x => new { x.CompanyId, x.InvoiceNumber }).IsUnique();
             e.HasOne(x => x.Company).WithMany(x => x.Invoices).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Salesperson).WithMany(x => x.Invoices).HasForeignKey(x => x.SalespersonId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<InvoiceLine>(e =>
