@@ -53,6 +53,69 @@ function setStorageItem<T>(key: string, value: T): void {
   }
 }
 
+type ServerProduct = {
+  id: string;
+  sku: string;
+  name: string;
+  hsnCode?: string;
+  unit: string;
+  costPrice: number;
+  sellingPrice: number;
+  stock: number;
+  reorderLevel: number;
+  taxRate: number;
+  isActive: boolean;
+};
+
+type ProductApiResponse = ServerProduct[] | { value?: ServerProduct[]; count?: number; Count?: number };
+
+function normalizeProductResponse(payload: ProductApiResponse): ServerProduct[] {
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.value)) return payload.value;
+  return [];
+}
+
+function productPayload(products: Product[]) {
+  return products.map((p) => ({
+    id: p.id,
+    sku: p.sku,
+    name: p.name,
+    hsnCode: p.hsnCode,
+    unit: p.unit,
+    costPrice: p.costPrice,
+    sellingPrice: p.sellingPrice,
+    stock: p.stock,
+    reorderLevel: p.reorderLevel,
+    taxRate: p.taxRate
+  }));
+}
+
+function mergeServerProducts(serverProducts: ServerProduct[]): Product[] {
+  const existingById = new Map(INITIAL_PRODUCTS.map((p) => [p.id, p]));
+  const existingBySku = new Map(INITIAL_PRODUCTS.map((p) => [p.sku, p]));
+
+  return serverProducts.map((p) => {
+    const existing = existingById.get(p.id) || existingBySku.get(p.sku);
+    return {
+      ...(existing || {} as Product),
+      id: p.id,
+      sku: p.sku,
+      name: p.name,
+      barcode: existing?.barcode || p.sku,
+      category: existing?.category || 'General',
+      costPrice: Number(p.costPrice),
+      sellingPrice: Number(p.sellingPrice),
+      stock: Number(p.stock),
+      reorderLevel: Number(p.reorderLevel),
+      taxRate: Number(p.taxRate),
+      unit: p.unit,
+      hsnCode: p.hsnCode,
+      updatedAt: new Date().toISOString(),
+      isActive: p.isActive
+    } as Product;
+  });
+}
+
 let productServerAvailable = false;
 
 async function hydrateProductsFromServer(): Promise<void> {
@@ -60,64 +123,38 @@ async function hydrateProductsFromServer(): Promise<void> {
 
   try {
     const response = await fetch('/api/products');
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
 
-    const serverProducts = await response.json() as Array<{
-      id: string;
-      sku: string;
-      name: string;
-      hsnCode?: string;
-      unit: string;
-      costPrice: number;
-      sellingPrice: number;
-      stock: number;
-      reorderLevel: number;
-      taxRate: number;
-      isActive: boolean;
-    }>;
+    const payload = await response.json() as ProductApiResponse;
+    const serverProducts = normalizeProductResponse(payload);
 
     if (serverProducts.length > 0) {
-      const existingById = new Map(INITIAL_PRODUCTS.map((p) => [p.id, p]));
-      const mapped: Product[] = serverProducts.map((p) => ({
-        ...(existingById.get(p.id) || {} as Product),
-        id: p.id,
-        sku: p.sku,
-        name: p.name,
-        barcode: existingById.get(p.id)?.barcode || p.sku,
-        category: existingById.get(p.id)?.category || 'General',
-        costPrice: Number(p.costPrice),
-        sellingPrice: Number(p.sellingPrice),
-        stock: Number(p.stock),
-        reorderLevel: Number(p.reorderLevel),
-        taxRate: Number(p.taxRate),
-        unit: p.unit,
-        hsnCode: p.hsnCode,
-        updatedAt: new Date().toISOString(),
-        isActive: p.isActive
-      }));
-      setStorageItem(KEYS.PRODUCTS, mapped);
-    } else {
-      // First migration: upload the existing frontend seed/catalog to SQL Server.
-      const response = await fetch('/api/products/sync', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(INITIAL_PRODUCTS.map((p) => ({
-          id: p.id,
-          sku: p.sku,
-          name: p.name,
-          hsnCode: p.hsnCode,
-          unit: p.unit,
-          costPrice: p.costPrice,
-          sellingPrice: p.sellingPrice,
-          stock: p.stock,
-          reorderLevel: p.reorderLevel,
-          taxRate: p.taxRate
-        })))
-      });
-      if (!response.ok) throw new Error(`Product migration HTTP ${response.status}`);
+      setStorageItem(KEYS.PRODUCTS, mergeServerProducts(serverProducts));
+      productServerAvailable = true;
+      return;
     }
 
+    // First migration: upload the existing frontend seed/catalog to SQL Server.
+    const syncResponse = await fetch('/api/products/sync', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(productPayload(INITIAL_PRODUCTS))
+    });
+
+    if (!syncResponse.ok) {
+      const details = await syncResponse.text().catch(() => '');
+      throw new Error(`Product migration HTTP ${syncResponse.status}${details ? `: ${details}` : ''}`);
+    }
+
+    const syncedPayload = await syncResponse.json() as ProductApiResponse;
+    const syncedProducts = normalizeProductResponse(syncedPayload);
+    if (syncedProducts.length === 0) {
+      throw new Error('Product migration returned an empty catalog.');
+    }
+
+    setStorageItem(KEYS.PRODUCTS, mergeServerProducts(syncedProducts));
     productServerAvailable = true;
+    console.info(`Migrated ${syncedProducts.length} products to SQL Server.`);
   } catch (error) {
     productServerAvailable = false;
     console.warn('Product API unavailable; retaining existing local product cache.', error);
@@ -130,18 +167,7 @@ function syncProducts(products: Product[]): void {
   void fetch('/api/products/sync', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(products.map((p) => ({
-      id: p.id,
-      sku: p.sku,
-      name: p.name,
-      hsnCode: p.hsnCode,
-      unit: p.unit,
-      costPrice: p.costPrice,
-      sellingPrice: p.sellingPrice,
-      stock: p.stock,
-      reorderLevel: p.reorderLevel,
-      taxRate: p.taxRate
-    })))
+    body: JSON.stringify(productPayload(products))
   }).catch((error) => {
     productServerAvailable = false;
     console.error('Product server sync failed:', error);
