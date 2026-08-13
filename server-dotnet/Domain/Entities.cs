@@ -126,6 +126,12 @@ public sealed class Invoice
     public string SalespersonMobile { get; set; } = string.Empty;
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
+    public decimal PromoDiscountPercent { get; set; }
+    public decimal PromoDiscountAmount { get; set; }
+    public decimal BranchManagerDiscountPercent { get; set; }
+    public decimal BranchManagerDiscountAmount { get; set; }
+    public Guid? BranchManagerUserId { get; set; }
+    public string? BranchManagerRemarks { get; set; }
     public decimal TaxableAmount { get; set; }
     public decimal CgstAmount { get; set; }
     public decimal SgstAmount { get; set; }
@@ -149,6 +155,7 @@ public sealed class InvoiceLine
     public Product Product { get; set; } = null!;
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
+    public decimal DiscountPercent { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal TaxableAmount { get; set; }
     public decimal CgstAmount { get; set; }
