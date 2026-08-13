@@ -45,10 +45,10 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         var product = await db.Products.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (product is null) return NotFound();
 
-        product.Sku = input.Sku;
-        product.Name = input.Name;
+        product.Sku = input.Sku.Trim();
+        product.Name = input.Name.Trim();
         product.HsnCode = input.HsnCode;
-        product.Unit = input.Unit;
+        product.Unit = input.Unit ?? "PCS";
         product.CostPrice = input.CostPrice;
         product.SellingPrice = input.SellingPrice;
         product.GstRate = input.GstRate;
@@ -60,8 +60,7 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         return NoContent();
     }
 
-    // Compatibility endpoint used by the existing React Storage layer during migration.
-    // It preserves the current UI and bulk state model while making SQL Server authoritative.
+    // Compatibility endpoint used while migrating the existing React product state to SQL Server.
     [HttpPut("sync")]
     public async Task<ActionResult<IEnumerable<ProductDto>>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken)
     {
@@ -71,17 +70,21 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
 
         foreach (var item in items.Where(x => !string.IsNullOrWhiteSpace(x.Sku) && !string.IsNullOrWhiteSpace(x.Name)))
         {
-            var product = await db.Products.FirstOrDefaultAsync(x => x.Id == item.Id && x.CompanyId == companyId, cancellationToken)
-                ?? await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == item.Sku, cancellationToken);
+            Guid? requestedId = Guid.TryParse(item.Id, out var parsedId) ? parsedId : null;
+            var product = requestedId.HasValue
+                ? await db.Products.FirstOrDefaultAsync(x => x.Id == requestedId && x.CompanyId == companyId, cancellationToken)
+                : null;
+
+            product ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == item.Sku, cancellationToken);
 
             if (product is null)
             {
-                product = new Product { Id = item.Id == Guid.Empty ? Guid.NewGuid() : item.Id, CompanyId = companyId.Value };
+                product = new Product { Id = requestedId ?? Guid.NewGuid(), CompanyId = companyId.Value };
                 db.Products.Add(product);
             }
 
-            product.Sku = item.Sku;
-            product.Name = item.Name;
+            product.Sku = item.Sku.Trim();
+            product.Name = item.Name.Trim();
             product.HsnCode = item.HsnCode;
             product.Unit = item.Unit ?? "PCS";
             product.CostPrice = item.CostPrice;
@@ -93,7 +96,8 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         }
 
         await db.SaveChangesAsync(cancellationToken);
-        return Ok((await db.Products.AsNoTracking().Where(x => x.CompanyId == companyId).OrderBy(x => x.Name).ToListAsync(cancellationToken)).Select(ToDto));
+        var result = await db.Products.AsNoTracking().Where(x => x.CompanyId == companyId).OrderBy(x => x.Name).ToListAsync(cancellationToken);
+        return Ok(result.Select(ToDto));
     }
 
     private async Task<Guid?> ResolveCompanyId(Guid? requestedCompanyId, CancellationToken cancellationToken)
@@ -125,54 +129,9 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         IsActive = input.IsActive
     };
 
-    private static ProductDto ToDto(Product product) => new(
-        product.Id,
-        product.Sku,
-        product.Name,
-        product.HsnCode,
-        product.Unit,
-        product.CostPrice,
-        product.SellingPrice,
-        product.StockQuantity,
-        product.ReorderLevel,
-        product.GstRate,
-        product.IsActive);
+    private static ProductDto ToDto(Product product) => new(product.Id, product.Sku, product.Name, product.HsnCode, product.Unit, product.CostPrice, product.SellingPrice, product.StockQuantity, product.ReorderLevel, product.GstRate, product.IsActive);
 
-    public sealed record ProductRequest(
-        Guid? CompanyId,
-        string Sku,
-        string Name,
-        string? HsnCode,
-        string? Unit,
-        decimal CostPrice,
-        decimal SellingPrice,
-        decimal Stock,
-        decimal ReorderLevel,
-        decimal GstRate,
-        bool IsActive = true);
-
-    public sealed record ProductSyncItem(
-        Guid Id,
-        string Sku,
-        string Name,
-        string? HsnCode,
-        string? Unit,
-        decimal CostPrice,
-        decimal SellingPrice,
-        decimal Stock,
-        decimal ReorderLevel,
-        decimal TaxRate);
-
-    public sealed record ProductDto(
-        Guid Id,
-        string Sku,
-        string Name,
-        string? HsnCode,
-        string Unit,
-        decimal CostPrice,
-        decimal SellingPrice,
-        decimal Stock,
-        decimal ReorderLevel,
-        decimal TaxRate,
-        bool IsActive);
+    public sealed record ProductRequest(Guid? CompanyId, string Sku, string Name, string? HsnCode, string? Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal GstRate, bool IsActive = true);
+    public sealed record ProductSyncItem(string Id, string Sku, string Name, string? HsnCode, string? Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal TaxRate);
+    public sealed record ProductDto(Guid Id, string Sku, string Name, string? HsnCode, string Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal TaxRate, bool IsActive);
 }
