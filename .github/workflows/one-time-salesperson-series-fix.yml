@@ -18,180 +18,21 @@ jobs:
           ref: feature/dotnet-mssql-server
           fetch-depth: 0
 
-      - name: Patch application
-        shell: python
-        run: |
-          from pathlib import Path
-          import re
+      - name: Apply patch
+        run: python tools/apply-salesperson-series-fix.py
 
-          pos = Path('src/components/PosBillingView.tsx')
-          s = pos.read_text(encoding='utf-8')
-
-          s = s.replace(
-              "  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);\n  const [promoInput, setPromoInput] = useState('');",
-              "  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);\n  const [salespersons, setSalespersons] = useState<Array<{ id: string; code: string; name: string; mobile: string; isActive: boolean }>>([]);\n  const [selectedSalespersonId, setSelectedSalespersonId] = useState('');\n  const [promoInput, setPromoInput] = useState('');"
-          )
-
-          s = s.replace(
-              "  const [newCustTax, setNewCustTax] = useState('');\n\n  // Draft Bill Handler",
-              "  const [newCustTax, setNewCustTax] = useState('');\n\n  const selectedSalesperson = useMemo(\n    () => salespersons.find((person) => person.id === selectedSalespersonId) || null,\n    [salespersons, selectedSalespersonId]\n  );\n\n  useEffect(() => {\n    let cancelled = false;\n    fetch('/api/salespersons')\n      .then(async (response) => {\n        if (!response.ok) throw new Error(`Salesperson API HTTP ${response.status}`);\n        return response.json();\n      })\n      .then((data) => {\n        if (!cancelled) setSalespersons(Array.isArray(data) ? data : []);\n      })\n      .catch((error) => {\n        console.error('Unable to load salesperson master:', error);\n        if (!cancelled) setSalespersons([]);\n      });\n    return () => { cancelled = true; };\n  }, []);\n\n  // Draft Bill Handler"
-          )
-
-          # Remove the editable invoice-number state introduced by the previous patch.
-          s = re.sub(r"\n  const \[invoiceNumber, setInvoiceNumber\] = useState<string>\(\(\) => generateInvoiceNumber\(1000\)\);", "", s, count=1)
-
-          # Restrict quick-entry units to Box and Nos (internally Nos continues to use the existing pcs path).
-          s = re.sub(
-              r"(<select[^>]*value=\{quickUnit\}[\s\S]*?</select>)",
-              """<select\n                  value={quickUnit}\n                  onChange={(e) => setQuickUnit(e.target.value as TileQtyUnit)}\n                  className=\"w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold\"\n                >\n                  <option value=\"box\">Box</option>\n                  <option value=\"pcs\">Nos</option>\n                </select>""",
-              s,
-              count=1
-          )
-
-          # Replace the invoice identity block with a mandatory salesperson selector.
-          old_identity = re.compile(r"        /\*\* Invoice Identity & Salesperson \*/[\s\S]*?        /\* Payment Method Selector \*/")
-          new_identity = """        {/* Salesperson Selection */}\n        <div className=\"bg-slate-800/80 p-3 rounded-2xl border border-slate-700\">\n          <div className=\"flex items-center justify-between mb-1\">\n            <label className=\"block text-[10px] font-bold text-slate-300\">Salesperson *</label>\n            <span className=\"text-[10px] text-slate-500\">Cashier: {activeUser.name}</span>\n          </div>\n          <select\n            value={selectedSalespersonId}\n            onChange={(e) => setSelectedSalespersonId(e.target.value)}\n            className=\"w-full px-3 py-2 bg-slate-900 border border-indigo-500/40 rounded-xl text-xs text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500\"\n          >\n            <option value=\"\">Select salesperson for this bill</option>\n            {salespersons.map((person) => (\n              <option key={person.id} value={person.id}>\n                {person.name} ({person.mobile})\n              </option>\n            ))}\n          </select>\n          {!selectedSalespersonId && <p className=\"text-[10px] text-amber-400 mt-1\">Select a salesperson before checkout.</p>}\n        </div>\n\n        {/* Payment Method Selector */}"""
-          s, count = old_identity.subn(new_identity, s, count=1)
-          if count != 1:
-              raise SystemExit('salesperson identity block not found')
-
-          # Replace checkout validation and allocate the final invoice number only at save time.
-          old_checkout = re.compile(r"  const handleCheckoutSubmit = \(\) => \{[\s\S]*?    const paidAmount =")
-          new_checkout = """  const handleCheckoutSubmit = async () => {\n    if (cartItems.length === 0) {\n      setToastNotification('Add at least one item before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    if (!selectedCustomer || !selectedCustomer.name.trim()) {\n      setToastNotification('Customer name is required before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    if (!selectedCustomer.phone?.trim()) {\n      setToastNotification('Customer mobile number is required before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    if (!selectedCustomer.address?.trim() && !selectedCustomer.gstAddress?.trim()) {\n      setToastNotification('Customer address is required before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    if (!selectedSalesperson) {\n      setToastNotification('Select a salesperson before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    let finalInvoiceNumber = '';\n    try {\n      const response = await fetch('/api/invoice-number', { method: 'POST' });\n      if (!response.ok) throw new Error(`Invoice numbering API HTTP ${response.status}`);\n      const payload = await response.json();\n      finalInvoiceNumber = String(payload?.invoiceNumber || '').trim();\n      if (!finalInvoiceNumber) throw new Error('Invoice numbering API returned an empty number.');\n    } catch (error) {\n      console.error('Invoice number allocation failed:', error);\n      setToastNotification('Unable to generate the invoice number. The bill was not saved.');\n      setTimeout(() => setToastNotification(null), 5000);\n      return;\n    }\n\n    const paidAmount ="""
-          s, count = old_checkout.subn(new_checkout, s, count=1)
-          if count != 1:
-              raise SystemExit('checkout block marker not found')
-
-          s = s.replace(
-              "      invoiceNumber: invoiceNumber.trim(),",
-              "      invoiceNumber: finalInvoiceNumber,"
-          )
-          s = s.replace(
-              "      salespersonName: activeUser.name,\n      salespersonMobile: activeUser.phone || '',",
-              "      salespersonName: selectedSalesperson.name,\n      salespersonMobile: selectedSalesperson.mobile,"
-          )
-
-          # Show the selected salesperson in the cart summary as well.
-          s = s.replace(
-              "<h3 className=\"font-bold text-base text-white\">Current Cart Bill</h3>",
-              "<h3 className=\"font-bold text-base text-white\">Current Cart Bill</h3>"
-          )
-
-          # Clear salesperson after successful save so the next bill requires a fresh selection.
-          s = s.replace(
-              "    setSelectedCustomer(null);\n    setAppliedPromo(null);",
-              "    setSelectedCustomer(null);\n    setSelectedSalespersonId('');\n    setAppliedPromo(null);"
-          )
-
-          pos.write_text(s, encoding='utf-8')
-
-          # Add Express proxies and a FIFO invoice-number allocator backed by the existing server persistence.
-          server = Path('server.ts')
-          t = server.read_text(encoding='utf-8')
-
-          proxy_marker = "app.use(\"/api/products\", async (req, res, next) => {"
-          proxy_block = r'''app.use("/api/salespersons", async (req, res, next) => {
-  try {
-    const targetUrl = `${DOTNET_API_URL}/api/salespersons${req.path === "/" ? "" : req.path}${req.url.includes("?") ? `?${req.url.split("?")[1]}` : ""}`;
-    const upstream = await fetch(targetUrl, { method: req.method });
-    const responseText = await upstream.text();
-    res.status(upstream.status);
-    const upstreamContentType = upstream.headers.get("content-type");
-    if (upstreamContentType) res.set("content-type", upstreamContentType);
-    return res.send(responseText);
-  } catch (error) {
-    console.error("ASP.NET salesperson API proxy failed:", error);
-    return next(error);
-  }
-});
-
-'''
-          if proxy_marker not in t:
-              raise SystemExit('product proxy marker not found')
-          t = t.replace(proxy_marker, proxy_block + proxy_marker, 1)
-
-          health_marker = 'app.get("/api/health", async (_req, res) => {'
-          number_block = r'''let invoiceNumberQueue = Promise.resolve();
-
-app.post("/api/invoice-number", async (_req, res, next) => {
-  const task = invoiceNumberQueue.then(async () => {
-    const year = new Date().getFullYear();
-    const current = await getEntity("invoiceSequence", { year, nextNumber: 1 });
-    const nextNumber = current?.year === year && Number(current?.nextNumber) > 0
-      ? Number(current.nextNumber)
-      : 1;
-
-    await saveEntity("invoiceSequence", {
-      year,
-      nextNumber: nextNumber + 1,
-      updatedAt: new Date().toISOString()
-    });
-
-    return `INV-${year}-${String(nextNumber).padStart(6, "0")}`;
-  });
-
-  invoiceNumberQueue = task.then(() => undefined, () => undefined);
-
-  try {
-    const invoiceNumber = await task;
-    return res.json({ invoiceNumber });
-  } catch (error) {
-    console.error("Invoice number allocation failed:", error);
-    return next(error);
-  }
-});
-
-'''
-          if health_marker not in t:
-              raise SystemExit('health marker not found')
-          t = t.replace(health_marker, number_block + health_marker, 1)
-          server.write_text(t, encoding='utf-8')
-
-          # Make the ASP.NET invoice API authoritative for invoice numbering as well.
-          inv = Path('server-dotnet/Controllers/InvoicesController.cs')
-          c = inv.read_text(encoding='utf-8')
-
-          c = c.replace(
-              "        var duplicateInvoice = await db.Invoices.AnyAsync(\n            x => x.CompanyId == request.CompanyId &&\n                 x.InvoiceNumber == request.InvoiceNumber.Trim(),\n            cancellationToken);\n\n        if (duplicateInvoice)\n            return Conflict(\"Invoice number already exists for this company.\");\n\n",
-              ""
-          )
-
-          c = c.replace(
-              "        if (string.IsNullOrWhiteSpace(request.InvoiceNumber))\n            return \"Invoice number is required.\";\n\n        if (request.InvoiceNumber.Trim().Length > 50)\n            return \"Invoice number cannot exceed 50 characters.\";\n\n",
-              ""
-          )
-
-          transaction_marker = "        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);\n        try\n        {\n            var invoiceId = Guid.NewGuid();"
-          transaction_replacement = """        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);\n        try\n        {\n            var invoiceYear = (request.InvoiceDate == default ? DateTime.UtcNow : request.InvoiceDate).Year;\n            var lockResource = $\"AVASurface.InvoiceSeries.{request.CompanyId}.{invoiceYear}\";\n\n            await db.Database.ExecuteSqlInterpolatedAsync(\n                $\"EXEC sp_getapplock @Resource = {lockResource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000\",\n                cancellationToken);\n\n            var invoicePrefix = $\"INV-{invoiceYear}-\";\n            var existingNumbers = await db.Invoices\n                .Where(x => x.CompanyId == request.CompanyId && x.InvoiceNumber.StartsWith(invoicePrefix))\n                .Select(x => x.InvoiceNumber)\n                .ToListAsync(cancellationToken);\n\n            var nextInvoiceNumber = 1;\n            foreach (var existingNumber in existingNumbers)\n            {\n                var suffix = existingNumber[invoicePrefix.Length..];\n                if (int.TryParse(suffix, out var parsed) && parsed >= nextInvoiceNumber)\n                    nextInvoiceNumber = parsed + 1;\n            }\n\n            var generatedInvoiceNumber = $\"{invoicePrefix}{nextInvoiceNumber:000000}\";\n            var invoiceId = Guid.NewGuid();"""
-          if transaction_marker not in c:
-              raise SystemExit('invoice transaction marker not found')
-          c = c.replace(transaction_marker, transaction_replacement, 1)
-
-          c = c.replace(
-              "                InvoiceNumber = request.InvoiceNumber.Trim(),",
-              "                InvoiceNumber = generatedInvoiceNumber,"
-          )
-
-          c = c.replace(
-              "        string InvoiceNumber,\n        DateTime InvoiceDate,",
-              "        string? InvoiceNumber,\n        DateTime InvoiceDate,"
-          )
-
-          inv.write_text(c, encoding='utf-8')
-
-      - name: Verify builds
-        shell: bash
+      - name: Verify frontend and API builds
         run: |
           npm install
           npm run build
           dotnet build server-dotnet/AVASurface.Server.csproj
 
-      - name: Commit and remove one-time workflow
+      - name: Commit patch and remove temporary files
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/components/PosBillingView.tsx server.ts server-dotnet/Controllers/InvoicesController.cs .github/workflows/one-time-salesperson-series-fix.yml
-          git rm .github/workflows/one-time-salesperson-series-fix.yml
+          git add src/components/PosBillingView.tsx server.ts server-dotnet/Controllers/InvoicesController.cs
+          git rm .github/workflows/one-time-salesperson-series-fix.yml tools/apply-salesperson-series-fix.py
           git commit -m "feat: require salesperson and generate invoice series on save"
           git push origin HEAD:feature/dotnet-mssql-server
