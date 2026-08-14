@@ -92,11 +92,16 @@ public sealed class CustomersController(BillingDbContext db) : ControllerBase
         if (string.IsNullOrWhiteSpace(input.BillingAddress)) return "Billing address is required.";
         if (string.IsNullOrWhiteSpace(input.City)) return "City is required.";
         if (string.IsNullOrWhiteSpace(input.State)) return "State is required.";
-        if (string.IsNullOrWhiteSpace(input.StateCode)) return "State code is required.";
 
         var type = input.CustomerType.Trim().ToUpperInvariant();
         if (type is not ("B2B" or "B2C")) return "CustomerType must be B2B or B2C.";
-        if (type == "B2B" && !IsValidGstin(input.Gstin)) return "A valid GSTIN is required for B2B customers.";
+
+        if (type == "B2B")
+        {
+            if (string.IsNullOrWhiteSpace(input.StateCode)) return "State code is required for B2B customers.";
+            if (!IsValidGstin(input.Gstin)) return "A valid GSTIN is required for B2B customers.";
+        }
+
         if (!string.IsNullOrWhiteSpace(input.Gstin) && !IsValidGstin(input.Gstin)) return "GSTIN format is invalid.";
         return null;
     }
