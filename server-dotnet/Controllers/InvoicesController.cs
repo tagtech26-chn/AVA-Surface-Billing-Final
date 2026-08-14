@@ -9,7 +9,9 @@ namespace AVASurface.Server.Controllers;
 
 [ApiController]
 [Route("api/invoices")]
-public sealed class InvoicesController(BillingDbContext db) : ControllerBase
+public sealed class InvoicesController(
+    BillingDbContext db,
+    MonthlyInvoicePartitionService monthlyPartitions) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Invoice>>> Get(CancellationToken cancellationToken)
@@ -263,6 +265,11 @@ public sealed class InvoicesController(BillingDbContext db) : ControllerBase
             });
 
             await db.SaveChangesAsync(cancellationToken);
+            await monthlyPartitions.MirrorInvoiceAsync(
+                invoice.Id,
+                invoice.InvoiceDate,
+                cancellationToken);
+
             await transaction.CommitAsync(cancellationToken);
 
             return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, invoice);
