@@ -1,6 +1,9 @@
 name: Apply B2B GST verification patch
 
 on:
+  push:
+    branches:
+      - feature/dotnet-mssql-server
   workflow_dispatch:
 
 permissions:
@@ -8,6 +11,7 @@ permissions:
 
 jobs:
   patch:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
