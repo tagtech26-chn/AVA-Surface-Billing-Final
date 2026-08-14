@@ -1,0 +1,37 @@
+name: Apply B2B GST verification patch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/dotnet-mssql-server
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Apply patch
+        run: python tools/apply-gst-b2b.py
+      - name: Verify frontend
+        run: npm run build
+      - name: Verify backend
+        run: dotnet build server-dotnet/AVASurface.Server.csproj
+      - name: Commit patch and remove helper files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/PosBillingView.tsx
+          git rm tools/apply-gst-b2b.py .github/workflows/patch-gst-b2b.yml
+          git commit -m "feat: require online active GST verification for B2B"
+          git push origin HEAD:feature/dotnet-mssql-server
