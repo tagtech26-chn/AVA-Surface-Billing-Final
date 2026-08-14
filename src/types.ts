@@ -61,6 +61,11 @@ export interface Customer {
   gstAddress?: string;
   taxNumber?: string;
   address?: string;
+  billingAddress?: string;
+  shippingAddress?: string;
+  city?: string;
+  state?: string;
+  stateCode?: string;
   loyaltyPoints: number;
   totalSpent: number;
   outstandingBalance: number;

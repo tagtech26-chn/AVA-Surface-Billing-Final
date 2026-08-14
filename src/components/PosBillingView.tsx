@@ -125,6 +125,12 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustEmail, setNewCustEmail] = useState('');
   const [newCustTax, setNewCustTax] = useState('');
+  const [newCustBillingAddress, setNewCustBillingAddress] = useState('');
+  const [newCustShippingAddress, setNewCustShippingAddress] = useState('');
+  const [newCustCity, setNewCustCity] = useState('');
+  const [newCustState, setNewCustState] = useState('');
+  const [newCustStateCode, setNewCustStateCode] = useState('');
+  const [shippingSameAsBilling, setShippingSameAsBilling] = useState(true);
 
   const selectedSalesperson = useMemo(
     () => salespersons.find((person) => person.id === selectedSalespersonId) || null,
@@ -687,16 +693,43 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
 
   const handleCreateCustomerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCustName.trim() || !newCustPhone.trim()) return;
+    const name = newCustName.trim();
+    const phone = newCustPhone.trim();
+    const billingAddress = newCustBillingAddress.trim();
+    const shippingAddress = (shippingSameAsBilling ? newCustBillingAddress : newCustShippingAddress).trim();
+    const city = newCustCity.trim();
+    const state = newCustState.trim();
+    const stateCode = newCustStateCode.trim();
+    const gstin = newCustTax.trim().toUpperCase();
+
+    if (!name || !phone || !billingAddress || !city || !state || !stateCode) {
+      setToastNotification('Customer name, mobile, billing address, city, state and state code are required.');
+      setTimeout(() => setToastNotification(null), 4500);
+      return;
+    }
+
+    if (newCustType === 'LEDGER' && !gstin) {
+      setToastNotification('GSTIN is mandatory for a Ledger (B2B) customer.');
+      setTimeout(() => setToastNotification(null), 4500);
+      return;
+    }
 
     const created = onAddNewCustomer({
-      name: newCustName,
-      phone: newCustPhone,
-      email: newCustEmail,
+      name,
+      phone,
+      email: newCustEmail.trim() || undefined,
       customerType: newCustType,
-      gstNumber: newCustType === 'LEDGER' ? newCustTax : undefined,
-      gstStatus: newCustType === 'LEDGER' ? 'ACTIVE' : undefined,
-      taxNumber: newCustTax
+      gstNumber: gstin || undefined,
+      gstStatus: gstin ? 'ACTIVE' : undefined,
+      taxNumber: gstin || undefined,
+      address: billingAddress,
+      billingAddress,
+      shippingAddress: shippingAddress || billingAddress,
+      city,
+      state,
+      stateCode,
+      gstState: state,
+      gstAddress: billingAddress
     });
 
     setSelectedCustomer(created);
@@ -705,6 +738,12 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     setNewCustPhone('');
     setNewCustEmail('');
     setNewCustTax('');
+    setNewCustBillingAddress('');
+    setNewCustShippingAddress('');
+    setNewCustCity('');
+    setNewCustState('');
+    setNewCustStateCode('');
+    setShippingSameAsBilling(true);
   };
 
   const handleCheckoutSubmit = async () => {
@@ -1709,57 +1748,126 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
               </div>
             </div>
 
-            <form onSubmit={handleCreateCustomerSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  {newCustType === 'LEDGER' ? 'Business / Firm Name' : 'Customer Name'}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newCustName}
-                  onChange={(e) => setNewCustName(e.target.value)}
-                  placeholder={newCustType === 'LEDGER' ? 'e.g. Royal BuildCon Pvt Ltd' : 'e.g. John Doe'}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Phone Number</label>
-                <input
-                  type="text"
-                  required
-                  value={newCustPhone}
-                  onChange={(e) => setNewCustPhone(e.target.value)}
-                  placeholder="+91 98000 00000"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Email (Optional)</label>
-                <input
-                  type="email"
-                  value={newCustEmail}
-                  onChange={(e) => setNewCustEmail(e.target.value)}
-                  placeholder="accounts@business.com"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-
-              {newCustType === 'LEDGER' && (
+            <form onSubmit={handleCreateCustomerSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">GST Number (GSTIN)</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    {newCustType === 'LEDGER' ? 'Business / Firm Name' : 'Customer Name'} *
+                  </label>
                   <input
                     type="text"
                     required
+                    value={newCustName}
+                    onChange={(e) => setNewCustName(e.target.value)}
+                    placeholder={newCustType === 'LEDGER' ? 'e.g. Royal BuildCon Pvt Ltd' : 'e.g. John Doe'}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Mobile Number *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={newCustPhone}
+                    onChange={(e) => setNewCustPhone(e.target.value)}
+                    placeholder="9876543210"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={newCustEmail}
+                    onChange={(e) => setNewCustEmail(e.target.value)}
+                    placeholder="accounts@business.com"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">GSTIN {newCustType === 'LEDGER' ? '*' : '(Optional)'}</label>
+                  <input
+                    type="text"
                     value={newCustTax}
                     onChange={(e) => setNewCustTax(e.target.value.toUpperCase())}
                     placeholder="24AAAAA1234A1Z5"
+                    maxLength={15}
                     className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono uppercase"
                   />
                 </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-300 mb-2">Billing Address</h4>
+                <textarea
+                  required
+                  value={newCustBillingAddress}
+                  onChange={(e) => setNewCustBillingAddress(e.target.value)}
+                  rows={2}
+                  placeholder="Door / Flat, Street, Area, Locality"
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs resize-none"
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                  <input
+                    required
+                    type="text"
+                    value={newCustCity}
+                    onChange={(e) => setNewCustCity(e.target.value)}
+                    placeholder="City *"
+                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                  <input
+                    required
+                    type="text"
+                    value={newCustState}
+                    onChange={(e) => setNewCustState(e.target.value)}
+                    placeholder="State *"
+                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                  <input
+                    required
+                    type="text"
+                    value={newCustStateCode}
+                    onChange={(e) => setNewCustStateCode(e.target.value.toUpperCase())}
+                    placeholder="State Code *"
+                    maxLength={3}
+                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-300">Shipping Address</h4>
+                  <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={shippingSameAsBilling}
+                      onChange={(e) => setShippingSameAsBilling(e.target.checked)}
+                      className="accent-indigo-500"
+                    />
+                    Same as billing
+                  </label>
+                </div>
+                {!shippingSameAsBilling && (
+                  <textarea
+                    required
+                    value={newCustShippingAddress}
+                    onChange={(e) => setNewCustShippingAddress(e.target.value)}
+                    rows={2}
+                    placeholder="Shipping / delivery address"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs resize-none"
+                  />
+                )}
+              </div>
+
+              {newCustType === 'LEDGER' && (
+                <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 text-[11px] text-emerald-200">
+                  Ledger customers require a valid GSTIN and complete billing details before they can be used on an invoice.
+                </div>
               )}
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800 sticky bottom-0 bg-slate-900">
                 <button
                   type="button"
                   onClick={() => setShowAddCustomerModal(false)}
@@ -1769,7 +1877,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold shadow"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow"
                 >
                   Save Customer
                 </button>
