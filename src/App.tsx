@@ -11,6 +11,7 @@ import { PromosView } from './components/PromosView';
 import { FinancialDashboardView } from './components/FinancialDashboardView';
 import { InvoicesView } from './components/InvoicesView';
 import { WarehouseView } from './components/WarehouseView';
+import { InvoiceWorkflowView } from './components/InvoiceWorkflowView';
 import { TallyIntegrationView } from './components/TallyIntegrationView';
 import { EWayInvoiceView } from './components/EWayInvoiceView';
 import { AuditLogView } from './components/AuditLogView';
@@ -57,56 +58,18 @@ export default function App() {
     const customerPhone = customer?.phone?.trim();
     const customerAddress = customer?.address?.trim();
 
-    if (!invoiceNumber) {
-      window.alert('Invoice number is required before saving the bill.');
-      return;
-    }
+    if (!invoiceNumber) { window.alert('Invoice number is required before saving the bill.'); return; }
+    if (!customerName) { window.alert('Customer name is required. Walk-in/blank customer bills are not allowed.'); return; }
+    if (!customerPhone) { window.alert('Customer mobile number is required before saving the bill.'); return; }
+    if (!customerAddress || customerAddress === 'Registered Business GST Address') { window.alert('Customer billing address is required before saving the bill.'); return; }
+    if (!newInvoice.items?.length) { window.alert('At least one invoice item is required.'); return; }
 
-    if (!customerName) {
-      window.alert('Customer name is required. Walk-in/blank customer bills are not allowed.');
-      return;
-    }
-
-    if (!customerPhone) {
-      window.alert('Customer mobile number is required before saving the bill.');
-      return;
-    }
-
-    if (!customerAddress || customerAddress === 'Registered Business GST Address') {
-      window.alert('Customer billing address is required before saving the bill.');
-      return;
-    }
-
-    if (!newInvoice.items?.length) {
-      window.alert('At least one invoice item is required.');
-      return;
-    }
-
-    const invoiceWithDelivery: Invoice = {
-      ...newInvoice,
-      invoiceNumber,
-      customer,
-      deliveryStatus: 'PENDING_DISPATCH'
-    };
-
+    const invoiceWithDelivery: Invoice = { ...newInvoice, invoiceNumber, customer, deliveryStatus: 'PENDING_DISPATCH' };
     setInvoices((prev) => [invoiceWithDelivery, ...prev]);
     setProducts(updatedProducts);
+    if (updatedCustomer) setCustomers((prev) => prev.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)));
 
-    if (updatedCustomer) {
-      setCustomers((prev) => prev.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)));
-    }
-
-    logAudit(
-      'INVOICE',
-      'MEDIUM',
-      'POS Bill Created',
-      `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}).`,
-      invoiceWithDelivery.invoiceNumber,
-      invoiceWithDelivery.id,
-      'Draft Bill',
-      `Paid ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}`
-    );
-
+    logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}).`, invoiceWithDelivery.invoiceNumber, invoiceWithDelivery.id, 'Draft Bill', `Paid ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}`);
     setPrintingInvoice(invoiceWithDelivery);
   };
 
@@ -204,9 +167,7 @@ export default function App() {
   const pendingDispatchCount = invoices.filter((i) => !i.deliveryStatus || i.deliveryStatus === 'PENDING_DISPATCH').length;
   const [showLowStockToast, setShowLowStockToast] = useState(true);
 
-  useEffect(() => {
-    if (lowStockCount > 0) setShowLowStockToast(true);
-  }, [activeUserId, lowStockCount]);
+  useEffect(() => { if (lowStockCount > 0) setShowLowStockToast(true); }, [activeUserId, lowStockCount]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
@@ -222,6 +183,7 @@ export default function App() {
         <main className="flex-1 p-4 sm:p-6 pb-20 md:pb-6 overflow-y-auto max-w-7xl mx-auto w-full">
           {activeTab === 'pos' && <PosBillingView products={products} customers={customers} promos={promos} activeUser={activeUser} storeDetails={storeDetails} onCompleteInvoice={handleCompleteInvoice} onAddNewCustomer={handleAddNewCustomer} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'inventory' && <InventoryView products={products} onSaveProduct={handleSaveProduct} onStockAdjustment={handleStockAdjustment} stockLogs={stockLogs} userRole={activeUser.role} currencySymbol={storeDetails.currencySymbol} />}
+          {activeTab === 'accounts' && <InvoiceWorkflowView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'warehouse' && <WarehouseView invoices={invoices} products={products} storeDetails={storeDetails} onUpdateDeliveryStatus={handleUpdateDeliveryStatus} />}
           {activeTab === 'promos' && <PromosView promos={promos} onSavePromo={handleSavePromo} onTogglePromoActive={handleTogglePromoActive} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'invoices' && <InvoicesView invoices={invoices} onRecordPayment={handleRecordInvoicePayment} onProcessRefund={handleProcessRefund} onSelectInvoiceToPrint={(inv) => setPrintingInvoice(inv)} currencySymbol={storeDetails.currencySymbol} />}
