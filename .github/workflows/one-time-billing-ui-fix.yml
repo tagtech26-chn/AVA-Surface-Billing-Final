@@ -1,0 +1,75 @@
+name: One-time billing UI fix
+
+on:
+  push:
+    branches:
+      - feature/dotnet-mssql-server
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/dotnet-mssql-server
+          fetch-depth: 0
+
+      - name: Patch billing unit display
+        shell: python
+        run: |
+          from pathlib import Path
+
+          pos = Path('src/components/PosBillingView.tsx')
+          s = pos.read_text(encoding='utf-8')
+
+          old = """    if (quickUnit === 'box') {
+      boxes = quickQty;
+    } else if (quickUnit === 'pcs') {
+      boxes = Math.ceil(quickQty / pcsPerBox);
+    } else if (quickUnit === 'sqft') {
+      boxes = Math.ceil(quickQty / sqftPerBox);
+    } else if (quickUnit === 'sqmt') {
+      boxes = Math.ceil((quickQty * 10.7639) / sqftPerBox);
+    } else if (quickUnit === 'set') {
+      boxes = quickQty;
+    }
+"""
+          # Keep stock quantity in box-equivalent units internally, while preserving the entered billing unit.
+          new = old
+          if old not in s:
+              raise SystemExit('POS quantity block not found')
+
+          s = s.replace(
+              "{formatCurrency(item.finalUnitPrice, currencySymbol)} × {item.quantity} boxes",
+              "{formatCurrency(item.finalUnitPrice, currencySymbol)} × {item.inputQuantity ?? item.quantity} {item.selectedUnit || item.product.unit || 'unit'}"
+          )
+          pos.write_text(s, encoding='utf-8')
+
+          inv = Path('src/components/InvoicesView.tsx')
+          t = inv.read_text(encoding='utf-8')
+          t = t.replace(
+              "{inv.items.map((i) => `${i.quantity}x ${i.product.name}`).join(', ')}",
+              "{inv.items.map((i) => `${i.inputQuantity ?? i.quantity} ${i.selectedUnit || i.product.unit || 'unit'} x ${i.product.name}`).join(', ')}"
+          )
+          t = t.replace(
+              "{item.quantity} boxes @ {formatCurrency(item.finalUnitPrice, currencySymbol)}",
+              "{item.inputQuantity ?? item.quantity} {item.selectedUnit || item.product.unit || 'unit'} @ {formatCurrency(item.finalUnitPrice, currencySymbol)}"
+          )
+          inv.write_text(t, encoding='utf-8')
+
+      - name: Commit and remove one-time workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/PosBillingView.tsx src/components/InvoicesView.tsx .github/workflows/one-time-billing-ui-fix.yml
+          git rm .github/workflows/one-time-billing-ui-fix.yml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "fix: preserve entered billing units in POS and invoice history"
+          git push origin HEAD:feature/dotnet-mssql-server
