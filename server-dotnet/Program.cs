@@ -21,6 +21,7 @@ builder.Services.AddDbContext<BillingDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"), sql =>
         sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null)));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
+builder.Services.AddScoped<BillingMasterSeedService>();
 
 builder.Services.AddCors(options =>
 {
@@ -52,6 +53,9 @@ using (var scope = app.Services.CreateScope())
 {
     var partitionService = scope.ServiceProvider.GetRequiredService<MonthlyInvoicePartitionService>();
     await partitionService.EnsureCurrentMonthAsync();
+
+    var billingMasterSeed = scope.ServiceProvider.GetRequiredService<BillingMasterSeedService>();
+    await billingMasterSeed.SeedAsync();
 }
 
 app.MapControllers();
