@@ -1,5 +1,6 @@
 using AVASurface.Server.Domain;
 using AVASurface.Server.Infrastructure;
+using AVASurface.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -25,6 +26,120 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
             .FirstOrDefaultAsync(cancellationToken);
 
         return user is null ? NotFound("No active workflow user is configured for this role.") : Ok(user);
+    }
+
+    [HttpGet("manager-pending")]
+    public async Task<ActionResult<IEnumerable<Invoice>>> ManagerPending(CancellationToken cancellationToken)
+        => Ok(await db.Invoices.AsNoTracking()
+            .Include(x => x.Customer)
+            .Include(x => x.Salesperson)
+            .Include(x => x.Lines).ThenInclude(x => x.Product)
+            .Where(x => x.WorkflowStatus == "MANAGER_APPROVAL_PENDING")
+            .OrderBy(x => x.InvoiceDate)
+            .ToListAsync(cancellationToken));
+
+    [HttpPost("{invoiceId:guid}/approve-manager-discount")]
+    public async Task<ActionResult> ApproveManagerDiscount(Guid invoiceId, ManagerApprovalRequest request, CancellationToken cancellationToken)
+    {
+        if (request.UserId == Guid.Empty)
+            return BadRequest("Branch Manager user is required.");
+
+        var manager = await db.AppUsers.FirstOrDefaultAsync(
+            x => x.Id == request.UserId && x.IsActive && x.Role == "BRANCH_MANAGER",
+            cancellationToken);
+        if (manager is null)
+            return BadRequest("Only an active Branch Manager can approve an additional discount.");
+
+        if (request.DiscountPercent <= 0 || request.DiscountPercent > 100)
+            return BadRequest("Approved additional discount must be greater than 0% and not exceed 100%.");
+        if (string.IsNullOrWhiteSpace(request.Remarks))
+            return BadRequest("Manager remarks are required.");
+
+        var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
+        if (invoice is null) return NotFound();
+        if (invoice.WorkflowStatus != "MANAGER_APPROVAL_PENDING")
+            return BadRequest($"Invoice is currently in workflow state '{invoice.WorkflowStatus}'.");
+
+        var baseAmount = Math.Max(0m, invoice.SubTotal - invoice.DiscountAmount - invoice.PromoDiscountAmount);
+        invoice.BranchManagerDiscountPercent = Math.Round(request.DiscountPercent, 2, MidpointRounding.AwayFromZero);
+        invoice.BranchManagerDiscountAmount = Math.Round(baseAmount * invoice.BranchManagerDiscountPercent / 100m, 2, MidpointRounding.AwayFromZero);
+        invoice.BranchManagerUserId = manager.Id;
+        invoice.BranchManagerRemarks = request.Remarks.Trim();
+        invoice.WorkflowStatus = "PAYMENT_PENDING";
+
+        // Recalculate total using the approved manager discount while preserving the existing tax rate.
+        var taxableBeforeManager = Math.Max(0m, invoice.TaxableAmount);
+        var revisedTaxable = Math.Max(0m, taxableBeforeManager - invoice.BranchManagerDiscountAmount);
+        var existingTax = invoice.CgstAmount + invoice.SgstAmount + invoice.IgstAmount;
+        var taxRatio = taxableBeforeManager <= 0m ? 0m : existingTax / taxableBeforeManager;
+        var revisedTax = Math.Round(revisedTaxable * taxRatio, 2, MidpointRounding.AwayFromZero);
+
+        if (invoice.IgstAmount > 0m)
+        {
+            invoice.IgstAmount = revisedTax;
+            invoice.CgstAmount = 0m;
+            invoice.SgstAmount = 0m;
+        }
+        else
+        {
+            invoice.CgstAmount = Math.Round(revisedTax / 2m, 2, MidpointRounding.AwayFromZero);
+            invoice.SgstAmount = Math.Round(revisedTax - invoice.CgstAmount, 2, MidpointRounding.AwayFromZero);
+            invoice.IgstAmount = 0m;
+        }
+
+        var revisedPreRound = Math.Round(revisedTaxable + revisedTax, 2, MidpointRounding.AwayFromZero);
+        var roundTo = 5m;
+        var roundedTotal = Math.Round(revisedPreRound / roundTo, 0, MidpointRounding.AwayFromZero) * roundTo;
+        invoice.RoundOffAmount = Math.Round(roundedTotal - revisedPreRound, 2, MidpointRounding.AwayFromZero);
+        invoice.TaxableAmount = revisedTaxable;
+        invoice.GrandTotal = roundedTotal;
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            UserId = manager.Id,
+            Action = "INVOICE_MANAGER_DISCOUNT_APPROVED",
+            EntityName = nameof(Invoice),
+            EntityId = invoice.Id,
+            Details = $"Additional discount {invoice.BranchManagerDiscountPercent:0.##}% approved. Remarks: {invoice.BranchManagerRemarks}",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(invoice);
+    }
+
+    [HttpPost("{invoiceId:guid}/reject-manager-discount")]
+    public async Task<ActionResult> RejectManagerDiscount(Guid invoiceId, ManagerRejectionRequest request, CancellationToken cancellationToken)
+    {
+        var manager = await db.AppUsers.FirstOrDefaultAsync(
+            x => x.Id == request.UserId && x.IsActive && x.Role == "BRANCH_MANAGER",
+            cancellationToken);
+        if (manager is null) return BadRequest("Only an active Branch Manager can reject an additional discount request.");
+        if (string.IsNullOrWhiteSpace(request.Remarks)) return BadRequest("Rejection remarks are required.");
+
+        var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
+        if (invoice is null) return NotFound();
+        if (invoice.WorkflowStatus != "MANAGER_APPROVAL_PENDING")
+            return BadRequest($"Invoice is currently in workflow state '{invoice.WorkflowStatus}'.");
+
+        invoice.WorkflowStatus = "MANAGER_APPROVAL_REJECTED";
+        invoice.BranchManagerUserId = manager.Id;
+        invoice.BranchManagerDiscountPercent = 0m;
+        invoice.BranchManagerDiscountAmount = 0m;
+        invoice.BranchManagerRemarks = request.Remarks.Trim();
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            UserId = manager.Id,
+            Action = "INVOICE_MANAGER_DISCOUNT_REJECTED",
+            EntityName = nameof(Invoice),
+            EntityId = invoice.Id,
+            Details = $"Additional discount request rejected. Remarks: {invoice.BranchManagerRemarks}",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(invoice);
     }
 
     [HttpGet("pending-payments")]
@@ -83,9 +198,11 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         if (requestedMethod == "CARD" && !System.Text.RegularExpressions.Regex.IsMatch(request.CardLast4 ?? string.Empty, "^\\d{4}$"))
             return BadRequest("Card last 4 digits are required for card payment.");
 
-        if ((requestedMethod is "UPI_QR" or "BANK_TRANSFER") &&
-            string.IsNullOrWhiteSpace(request.Utr))
+        if ((requestedMethod is "UPI_QR" or "BANK_TRANSFER") && string.IsNullOrWhiteSpace(request.Utr))
             return BadRequest("UTR / transaction ID is required for this payment method.");
+
+        if (requestedMethod == "CASH" && string.IsNullOrWhiteSpace(request.SpecificReference))
+            return BadRequest("Cash receipt/reference is required after cash collection by Accounts.");
 
         invoice.PaymentConfirmedByUserId = accountsUser.Id;
         invoice.PaymentConfirmedByName = accountsUser.DisplayName;
@@ -101,9 +218,7 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
 
         invoice.Payments.Add(new Payment
         {
-            Id = Guid.NewGuid(),
-            InvoiceId = invoice.Id,
-            Amount = request.Amount,
+            Id = Guid.NewGuid(), InvoiceId = invoice.Id, Amount = request.Amount,
             Method = requestedMethod,
             PaymentDateUtc = request.PaymentDateUtc == default ? DateTime.UtcNow : request.PaymentDateUtc,
             Reference = request.SpecificReference.Trim()
@@ -111,12 +226,8 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
 
         db.AuditLogs.Add(new AuditLog
         {
-            UserId = accountsUser.Id,
-            Action = "INVOICE_PAYMENT_CONFIRMED",
-            EntityName = nameof(Invoice),
-            EntityId = invoice.Id,
-            Details = $"Accounts confirmed {requestedMethod} payment: amount {request.Amount:0.00}, reference {request.SpecificReference}.",
-            CreatedAtUtc = DateTime.UtcNow
+            UserId = accountsUser.Id, Action = "INVOICE_PAYMENT_CONFIRMED", EntityName = nameof(Invoice), EntityId = invoice.Id,
+            Details = $"Accounts confirmed {requestedMethod} payment: amount {request.Amount:0.00}, reference {request.SpecificReference}.", CreatedAtUtc = DateTime.UtcNow
         });
 
         await db.SaveChangesAsync(cancellationToken);
@@ -143,12 +254,8 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
 
         db.AuditLogs.Add(new AuditLog
         {
-            UserId = warehouseUser.Id,
-            Action = "INVOICE_LOADED",
-            EntityName = nameof(Invoice),
-            EntityId = invoice.Id,
-            Details = $"Loaded by {request.LoadedBy}; verified by {request.VerifiedBy}; vehicle {request.VehicleNumber}.",
-            CreatedAtUtc = DateTime.UtcNow
+            UserId = warehouseUser.Id, Action = "INVOICE_LOADED", EntityName = nameof(Invoice), EntityId = invoice.Id,
+            Details = $"Loaded by {request.LoadedBy}; verified by {request.VerifiedBy}; vehicle {request.VehicleNumber}.", CreatedAtUtc = DateTime.UtcNow
         });
 
         await db.SaveChangesAsync(cancellationToken);
@@ -172,18 +279,16 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
 
         db.AuditLogs.Add(new AuditLog
         {
-            UserId = warehouseUser.Id,
-            Action = "INVOICE_DELIVERED",
-            EntityName = nameof(Invoice),
-            EntityId = invoice.Id,
-            Details = $"Delivered by {invoice.DeliveredByName}. Remarks: {request.Remarks}",
-            CreatedAtUtc = DateTime.UtcNow
+            UserId = warehouseUser.Id, Action = "INVOICE_DELIVERED", EntityName = nameof(Invoice), EntityId = invoice.Id,
+            Details = $"Delivered by {invoice.DeliveredByName}. Remarks: {request.Remarks}", CreatedAtUtc = DateTime.UtcNow
         });
 
         await db.SaveChangesAsync(cancellationToken);
         return Ok(invoice);
     }
 
+    public sealed record ManagerApprovalRequest(Guid UserId, decimal DiscountPercent, string Remarks);
+    public sealed record ManagerRejectionRequest(Guid UserId, string Remarks);
     public sealed record PaymentConfirmationRequest(Guid UserId, decimal Amount, string Method, string SpecificReference, string? BankName = null, string? CardLast4 = null, string? Utr = null, string? Remarks = null, DateTime PaymentDateUtc = default);
     public sealed record WarehouseLoadRequest(Guid UserId, string LoadedBy, string VerifiedBy, string? VehicleNumber = null, string? Remarks = null);
     public sealed record DeliveryConfirmationRequest(Guid UserId, string? DeliveredByName = null, string? Remarks = null);
