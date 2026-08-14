@@ -1,0 +1,45 @@
+name: One-time customer details patch
+
+on:
+  push:
+    branches:
+      - feature/dotnet-mssql-server
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/dotnet-mssql-server
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Apply customer details patch
+        run: python tools/apply-customer-details.py
+
+      - name: Verify builds
+        run: |
+          npm run build
+          dotnet build server-dotnet/AVASurface.Server.csproj
+
+      - name: Commit and clean temporary patch files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/types.ts src/components/PosBillingView.tsx
+          git rm .github/workflows/one-time-customer-details.yml tools/apply-customer-details.py
+          git commit -m "feat: expand customer billing details"
+          git push origin HEAD:feature/dotnet-mssql-server
