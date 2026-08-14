@@ -92,6 +92,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [selectedSalespersonId, setSelectedSalespersonId] = useState('');
   const [promoInput, setPromoInput] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<PromoRule | null>(null);
+  const [promoDismissed, setPromoDismissed] = useState(false);
   const [promoError, setPromoError] = useState('');
   const [manualDiscount, setManualDiscount] = useState<number>(0);
 
@@ -446,12 +447,14 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   }, [cartItems]);
 
   // Check if Auto-apply promo rule fits
+  const eligiblePromos = useMemo(() => {
+    return promos.filter((p) => p.isActive && subtotal >= p.minOrderValue);
+  }, [promos, subtotal]);
+
   const autoPromo = useMemo(() => {
-    if (appliedPromo) return null;
-    return promos.find(
-      (p) => p.isActive && p.autoApply && subtotal >= p.minOrderValue
-    );
-  }, [promos, subtotal, appliedPromo]);
+    if (promoDismissed || appliedPromo) return null;
+    return eligiblePromos.find((p) => p.autoApply) || null;
+  }, [eligiblePromos, appliedPromo, promoDismissed]);
 
   const activePromoRule = appliedPromo || autoPromo;
 
@@ -678,6 +681,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     }
 
     setAppliedPromo(promo);
+    setPromoDismissed(false);
     setPromoInput('');
   };
 
@@ -849,6 +853,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     setSelectedCustomer(null);
     setSelectedSalespersonId('');
     setAppliedPromo(null);
+    setPromoDismissed(false);
     setManualDiscount(0);
     setCashTendered('');
     setPaymentNotes('');
@@ -1434,30 +1439,72 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
           </div>
 
           {activePromoRule ? (
-            <div className="p-2 bg-emerald-950/60 border border-emerald-500/40 rounded-xl flex items-center justify-between text-xs text-emerald-300">
-              <div>
-                <span className="font-bold">{activePromoRule.code}</span> ({activePromoRule.title})
+            <div className="space-y-1.5">
+              <div className="flex gap-2">
+                <select
+                  value={activePromoRule.code}
+                  onChange={(e) => {
+                    const nextCode = e.target.value;
+                    if (!nextCode) {
+                      setAppliedPromo(null);
+                      setPromoDismissed(true);
+                      return;
+                    }
+                    const nextPromo = eligiblePromos.find((p) => p.code === nextCode) || null;
+                    setAppliedPromo(nextPromo);
+                    setPromoDismissed(false);
+                  }}
+                  className="flex-1 px-3 py-1 bg-slate-900 border border-emerald-500/40 rounded-xl text-xs text-white font-semibold"
+                >
+                  {eligiblePromos.map((promo) => (
+                    <option key={promo.id} value={promo.code}>
+                      {promo.code} - {promo.title}
+                    </option>
+                  ))}
+                  <option value="">No Promotion</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => { setAppliedPromo(null); setPromoDismissed(true); }}
+                  className="px-3 py-1 text-[10px] text-rose-300 bg-rose-950/50 border border-rose-500/30 rounded-xl font-bold"
+                >
+                  Remove
+                </button>
               </div>
-              <span className="font-extrabold text-emerald-400">
-                -{formatCurrency(promoDiscountAmount, currencySymbol)}
-              </span>
+              <div className="p-2 bg-emerald-950/60 border border-emerald-500/40 rounded-xl flex items-center justify-between text-xs text-emerald-300">
+                <div><span className="font-bold">{activePromoRule.code}</span> ({activePromoRule.title})</div>
+                <span className="font-extrabold text-emerald-400">-{formatCurrency(promoDiscountAmount, currencySymbol)}</span>
+              </div>
             </div>
           ) : (
-            <form onSubmit={handleApplyPromoCode} className="flex gap-2">
-              <input
-                type="text"
-                value={promoInput}
-                onChange={(e) => setPromoInput(e.target.value)}
-                placeholder="Promo Code (e.g. WELCOME10)"
-                className="flex-1 px-3 py-1 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white uppercase tracking-wider focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-              <button
-                type="submit"
-                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow transition"
-              >
-                Apply
-              </button>
-            </form>
+            <div className="space-y-1.5">
+              <div className="flex gap-2">
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const nextPromo = eligiblePromos.find((p) => p.code === e.target.value) || null;
+                    if (nextPromo) { setAppliedPromo(nextPromo); setPromoDismissed(false); }
+                  }}
+                  className="flex-1 px-3 py-1 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-300"
+                >
+                  <option value="">Select Promotion (optional)</option>
+                  {eligiblePromos.map((promo) => (
+                    <option key={promo.id} value={promo.code}>{promo.code} - {promo.title}</option>
+                  ))}
+                </select>
+                <button type="button" onClick={() => setPromoDismissed(false)} className="px-3 py-1 text-[10px] text-slate-300 bg-slate-900 border border-slate-700 rounded-xl">Reset</button>
+              </div>
+              <form onSubmit={handleApplyPromoCode} className="flex gap-2">
+                <input
+                  type="text"
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value)}
+                  placeholder="Promo Code (e.g. WELCOME10)"
+                  className="flex-1 px-3 py-1 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white uppercase tracking-wider focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <button type="submit" className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow transition">Apply</button>
+              </form>
+            </div>
           )}
 
           {promoError && <p className="text-[10px] text-rose-400">{promoError}</p>}
