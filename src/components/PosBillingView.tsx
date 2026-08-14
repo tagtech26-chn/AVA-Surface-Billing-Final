@@ -92,6 +92,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [appliedPromo, setAppliedPromo] = useState<PromoRule | null>(null);
   const [promoError, setPromoError] = useState('');
   const [manualDiscount, setManualDiscount] = useState<number>(0);
+  const [invoiceNumber, setInvoiceNumber] = useState<string>(() => generateInvoiceNumber(1000));
 
   // Customer Type & Ledger GST State
   const [customerType, setCustomerType] = useState<'NORMAL' | 'LEDGER'>('NORMAL');
@@ -264,12 +265,29 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
 
     const safeBoxes = Math.max(1, boxes);
     const weightKg = safeBoxes * weightPerBox;
-    const totalPrice = safeBoxes * selectedQuickProd.sellingPrice;
+
+    let unitPrice = selectedQuickProd.sellingPrice;
+    let totalPrice = quickQty * unitPrice;
+    if (quickUnit === 'pcs') {
+      unitPrice = selectedQuickProd.sellingPrice / pcsPerBox;
+      totalPrice = quickQty * unitPrice;
+    } else if (quickUnit === 'sqft') {
+      unitPrice = selectedQuickProd.pricePerSqFt || (selectedQuickProd.sellingPrice / sqftPerBox);
+      totalPrice = quickQty * unitPrice;
+    } else if (quickUnit === 'sqmt') {
+      unitPrice = (selectedQuickProd.pricePerSqFt || (selectedQuickProd.sellingPrice / sqftPerBox)) * 10.7639;
+      totalPrice = quickQty * unitPrice;
+    } else if (quickUnit === 'set') {
+      totalPrice = quickQty * selectedQuickProd.sellingPrice;
+    } else {
+      totalPrice = safeBoxes * selectedQuickProd.sellingPrice;
+    }
 
     return {
       boxes: safeBoxes,
       weightKg: Math.round(weightKg * 10) / 10,
-      totalPrice
+      totalPrice: Math.round(totalPrice * 100) / 100,
+      unitPrice: Math.round(unitPrice * 100) / 100
     };
   }, [selectedQuickProd, quickQty, quickUnit]);
 
@@ -309,7 +327,8 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
             selectedUnit: quickUnit,
             itemWeightKg: Math.round(weightKg * 10) / 10,
             discountAmount: 0,
-            finalUnitPrice: selectedQuickProd.sellingPrice,
+            discountPercent: 0,
+            finalUnitPrice: quickCalculatedDetails.unitPrice,
             totalPrice
           }
         ];
@@ -389,7 +408,10 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   }, [cartItems]);
 
   const itemDiscountsTotal = useMemo(() => {
-    return cartItems.reduce((acc, item) => acc + item.discountAmount * item.quantity, 0);
+    return cartItems.reduce((acc, item) => {
+      const billedQuantity = item.inputQuantity ?? item.quantity;
+      return acc + item.discountAmount * billedQuantity;
+    }, 0);
   }, [cartItems]);
 
   // Total Shipment Weight Calculation (kg)
@@ -569,6 +591,24 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [products]);
 
+  const handleUpdateLineDiscount = (productId: string, discountPercent: number) => {
+    const safePercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    setCartItems((prev) => prev.map((item) => {
+      if (item.product.id !== productId) return item;
+      const billedQuantity = item.inputQuantity ?? item.quantity;
+      const baseTotal = item.totalPrice + (item.discountAmount * billedQuantity);
+      const discountAmount = (baseTotal * safePercent) / 100 / Math.max(1, billedQuantity);
+      const baseUnitPrice = baseTotal / Math.max(1, billedQuantity);
+      return {
+        ...item,
+        discountPercent: safePercent,
+        discountAmount: Math.round(discountAmount * 100) / 100,
+        finalUnitPrice: Math.round((baseUnitPrice - discountAmount) * 100) / 100,
+        totalPrice: Math.round((baseTotal - (baseTotal * safePercent / 100)) * 100) / 100
+      };
+    }));
+  };
+
   const handleUpdateQuantity = (productId: string, delta: number) => {
     setCartItems((prev) => {
       return prev
@@ -641,7 +681,41 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   };
 
   const handleCheckoutSubmit = () => {
-    if (cartItems.length === 0) return;
+    if (!invoiceNumber.trim()) {
+      setToastNotification('Invoice number is required before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (cartItems.length === 0) {
+      setToastNotification('Add at least one item before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!selectedCustomer || !selectedCustomer.name.trim()) {
+      setToastNotification('Customer name is required before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!selectedCustomer.phone?.trim()) {
+      setToastNotification('Customer mobile number is required before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!selectedCustomer.address?.trim() && !selectedCustomer.gstAddress?.trim()) {
+      setToastNotification('Customer address is required before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!activeUser.phone?.trim()) {
+      setToastNotification('Salesperson mobile number is required for the invoice.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
 
     const paidAmount =
       paymentMethod === 'CASH'
@@ -705,12 +779,14 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
 
     const newInvoice: Invoice = {
       id: generateId('inv'),
-      invoiceNumber: generateInvoiceNumber(1000 + Math.floor(Math.random() * 800)),
+      invoiceNumber: invoiceNumber.trim(),
       date: new Date().toISOString(),
       dueDate: paymentMethod === 'ON_ACCOUNT' ? dueDateInput : undefined,
       customer: updatedCustomerObj || finalCustomerObj,
       cashierName: activeUser.name,
       cashierRole: activeUser.role,
+      salespersonName: activeUser.name,
+      salespersonMobile: activeUser.phone || '',
       items: cartItems,
       subtotal,
       itemDiscountsTotal,
@@ -1273,7 +1349,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                         {item.product.tileDimensions || item.product.unit} • Lot: {item.product.batchNo || 'L1'}
                       </p>
                       <div className="flex items-center space-x-2 text-[10px] text-indigo-300 font-semibold mt-0.5">
-                        <span>{formatCurrency(item.finalUnitPrice, currencySymbol)} × {item.quantity} boxes</span>
+                        <span>{formatCurrency(item.finalUnitPrice, currencySymbol)} × {item.inputQuantity ?? item.quantity} {item.selectedUnit || item.product.unit || 'unit'}</span>
                         <span className="text-amber-400">• {itemW.toFixed(1)} kg</span>
                       </div>
                     </div>
@@ -1295,6 +1371,10 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                         </button>
                       </div>
 
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[9px] text-slate-400">Disc %</label>
+                        <input type="number" min="0" max="100" step="0.01" value={item.discountPercent ?? 0} onChange={(e) => handleUpdateLineDiscount(item.product.id, Number(e.target.value))} className="w-14 px-1.5 py-1 bg-slate-900 border border-amber-500/40 rounded-lg text-[10px] text-white text-right font-bold" title="Line item discount percentage" />
+                      </div>
                       <span className="font-extrabold text-xs text-white min-w-[55px] text-right">
                         {formatCurrency(item.totalPrice, currencySymbol)}
                       </span>
@@ -1352,6 +1432,18 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
           )}
 
           {promoError && <p className="text-[10px] text-rose-400">{promoError}</p>}
+        </div>
+
+        {/* Invoice Identity & Salesperson */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-800/80 p-3 rounded-2xl border border-slate-700">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-300 mb-1">Invoice Number *</label>
+            <input type="text" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-xl text-xs text-white font-mono font-bold" placeholder="Invoice Number" />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-300 mb-1">Salesperson</label>
+            <div className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-xl text-xs text-white font-semibold">{activeUser.name} · {activeUser.phone || 'Mobile missing'}</div>
+          </div>
         </div>
 
         {/* Payment Method Selector */}
