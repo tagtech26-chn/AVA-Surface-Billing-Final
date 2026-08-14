@@ -36,7 +36,8 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
             return BadRequest("Accounts user is required.");
 
         var accountsUser = await db.AppUsers.FirstOrDefaultAsync(
-            x => x.Id == request.UserId && x.IsActive && x.Role == "ACCOUNTS",
+            x => x.Id == request.UserId && x.IsActive &&
+                 (x.Role == "ACCOUNTANT" || x.Role == "ACCOUNTS"),
             cancellationToken);
         if (accountsUser is null)
             return BadRequest("Only an active Accounts user can confirm payment.");
