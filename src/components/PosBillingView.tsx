@@ -721,7 +721,9 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
       email: newCustEmail.trim() || undefined,
       customerType: newCustType,
       gstNumber: gstin || undefined,
-      gstStatus: gstin ? 'ACTIVE' : undefined,
+      gstStatus: newCustType === 'LEDGER' ? (gstData?.status || 'UNVERIFIED') : undefined,
+      gstLegalName: gstData?.legalName || undefined,
+      gstTradeName: gstData?.tradeName || undefined,
       taxNumber: gstin || undefined,
       address: billingAddress,
       billingAddress,
@@ -1356,7 +1358,30 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                       <p className="text-[10px] text-emerald-300/80 truncate"><strong>Address:</strong> {gstData.address}</p>
                     </div>
                   ) : (
-                    <p className="text-[11px] text-rose-300">{gstData.message}</p>
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-rose-300">{gstData.message}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewCustType('LEDGER');
+                          setNewCustTax(gstInput.trim().toUpperCase());
+                          setNewCustName('');
+                          setNewCustPhone('');
+                          setNewCustEmail('');
+                          setNewCustBillingAddress('');
+                          setNewCustShippingAddress('');
+                          setNewCustCity('');
+                          setNewCustState('');
+                          setNewCustStateCode('');
+                          setNewCustPincode('');
+                          setShippingSameAsBilling(true);
+                          setShowAddCustomerModal(true);
+                        }}
+                        className="w-full px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition"
+                      >
+                        Enter B2B Customer Details Manually
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
