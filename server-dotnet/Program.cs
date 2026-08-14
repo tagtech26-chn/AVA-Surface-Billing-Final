@@ -2,6 +2,7 @@ using AVASurface.Server.Infrastructure;
 using AVASurface.Server.Services;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
+using AVASurface.Server.Controllers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,6 +23,12 @@ builder.Services.AddDbContext<BillingDbContext>(options =>
         sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null)));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 builder.Services.AddScoped<BillingMasterSeedService>();
+builder.Services.Configure<GstVerificationOptions>(builder.Configuration.GetSection("GstVerification"));
+builder.Services.AddHttpClient("GstVerification", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("AVASurface-Billing/1.0");
+});
 
 builder.Services.AddCors(options =>
 {
