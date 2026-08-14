@@ -21,10 +21,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Install frontend dependencies
-        run: npm ci
+      - name: Install frontend dependencies and refresh lockfile
+        run: npm install
 
       - name: Apply customer details patch
         run: python tools/apply-customer-details.py
@@ -39,7 +38,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/types.ts src/components/PosBillingView.tsx
+          git add package-lock.json src/types.ts src/components/PosBillingView.tsx
           git rm .github/workflows/one-time-customer-details.yml tools/apply-customer-details.py
           git commit -m "feat: expand customer billing details"
           git push origin HEAD:feature/dotnet-mssql-server
