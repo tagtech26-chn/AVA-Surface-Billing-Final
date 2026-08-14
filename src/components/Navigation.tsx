@@ -43,7 +43,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   );
 
   const isManagerRole = userRole === 'MANAGER' || userRole === 'BRANCH_MANAGER';
-  const isCashier = userRole === 'CASHIER';
+  const isBillingRole = userRole === 'CASHIER' || userRole === 'BILLING_USER';
 
   const navItems = [
     {
@@ -63,7 +63,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       badge: lowStockCount > 0 ? `${lowStockCount}` : null,
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40'
     },
-    ...(isCashier
+    ...(isBillingRole
       ? [
           {
             id: 'discount-request',
@@ -179,12 +179,13 @@ export const Navigation: React.FC<NavigationProps> = ({
   };
 
   const roleDescription = {
-    ADMIN: 'Full system control, billing, inventory, reports and user permissions.',
+    ADMIN: 'System administration and oversight. POS billing is restricted to Cashier/Billing users.',
     MANAGER:
-      'POS sales, inventory, promotions, financial review and additional discount approval.',
+      'Financial review and additional discount approval. POS billing is restricted to Cashier/Billing users.',
     BRANCH_MANAGER:
-      'Branch billing, inventory, promotions and additional discount approval.',
+      'Branch inventory, promotions and additional discount approval. POS billing is restricted to Cashier/Billing users.',
     CASHIER: 'Billing POS, product lookup and additional discount requests.',
+    BILLING_USER: 'Billing POS, product lookup and additional discount requests.',
     ACCOUNTANT:
       'Financial reports, payment confirmation, expenses, Tally bridge, e-Way and audit review.',
     WAREHOUSE:
