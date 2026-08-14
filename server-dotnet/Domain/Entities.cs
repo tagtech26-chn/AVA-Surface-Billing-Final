@@ -141,6 +141,7 @@ public sealed class Invoice
     public decimal GrandTotal { get; set; }
     public string Status { get; set; } = "UNPAID";
     public string WorkflowStatus { get; set; } = "PAYMENT_PENDING";
+    public string PaymentMethodRequested { get; set; } = "CASH";
     public Guid? PaymentConfirmedByUserId { get; set; }
     public string? PaymentConfirmedByName { get; set; }
     public DateTime? PaymentConfirmedAtUtc { get; set; }
