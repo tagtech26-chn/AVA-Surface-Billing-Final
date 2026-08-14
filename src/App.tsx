@@ -219,7 +219,7 @@ export default function App() {
   };
 
   const handleUpdateEWayDetails = (invoiceId: string, ewayBillNo: string, irnNo: string, ackNo: string) => {
-    setInvoices((prev) => inv.id === invoiceId ? { ...inv, ewayBillNo, ewayBillDate: new Date().toISOString(), irnNo, ackNo, ackDate: new Date().toISOString() } : inv));
+    setInvoices((prev) => prev.map((inv) => inv.id === invoiceId ? { ...inv, ewayBillNo, ewayBillDate: new Date().toISOString(), irnNo, ackNo, ackDate: new Date().toISOString() } : inv));
   };
 
   const handleAddNewCustomer = (newCustData: Omit<Customer, 'id' | 'loyaltyPoints' | 'totalSpent' | 'outstandingBalance'>): Customer => {
