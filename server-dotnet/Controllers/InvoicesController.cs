@@ -246,6 +246,8 @@ public sealed class InvoicesController(
                 RoundOffAmount = calculation.RoundOffAmount,
                 GrandTotal = calculation.GrandTotal,
                 Status = "UNPAID",
+                WorkflowStatus = "PAYMENT_PENDING",
+                PaymentMethodRequested = request.PaymentMethodRequested,
                 CreatedAtUtc = DateTime.UtcNow
             };
 
@@ -283,7 +285,7 @@ public sealed class InvoicesController(
                 EntityId = invoiceId,
                 Details = request.BranchManagerDiscountPercent > 0
                     ? $"Branch Manager discount {request.BranchManagerDiscountPercent:0.##}% approved. Remarks: {request.BranchManagerRemarks}"
-                    : "Invoice created with server-side calculation.",
+                    : $"Invoice created with payment method '{request.PaymentMethodRequested}' pending Accounts confirmation.",
                 CreatedAtUtc = DateTime.UtcNow
             });
 
@@ -315,6 +317,10 @@ public sealed class InvoicesController(
         if (request.SalespersonId == Guid.Empty)
             return "Salesperson is required.";
 
+        var requestedMethod = request.PaymentMethodRequested.Trim().ToUpperInvariant();
+        if (requestedMethod is not ("CASH" or "CARD" or "UPI_QR" or "BANK_TRANSFER"))
+            return "Payment method must be CASH, CARD, UPI_QR or BANK_TRANSFER.";
+
         if (request.BranchManagerDiscountPercent < 0 || request.BranchManagerDiscountPercent > 100)
             return "Branch Manager discount must be between 0% and 100%.";
 
@@ -335,6 +341,7 @@ public sealed class InvoicesController(
         DateTime InvoiceDate,
         List<InvoiceLineRequest> Lines,
         List<string> PromotionCodes,
+        string PaymentMethodRequested = "CASH",
         decimal BranchManagerDiscountPercent = 0m,
         Guid? BranchManagerUserId = null,
         string? BranchManagerRemarks = null,
