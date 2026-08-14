@@ -140,6 +140,24 @@ public sealed class Invoice
     public decimal RoundOffAmount { get; set; }
     public decimal GrandTotal { get; set; }
     public string Status { get; set; } = "UNPAID";
+    public string WorkflowStatus { get; set; } = "PAYMENT_PENDING";
+    public Guid? PaymentConfirmedByUserId { get; set; }
+    public string? PaymentConfirmedByName { get; set; }
+    public DateTime? PaymentConfirmedAtUtc { get; set; }
+    public string? PaymentMethodConfirmed { get; set; }
+    public string? PaymentSpecificReference { get; set; }
+    public string? PaymentBankName { get; set; }
+    public string? PaymentCardLast4 { get; set; }
+    public string? PaymentUtr { get; set; }
+    public string? PaymentRemarks { get; set; }
+    public string? WarehouseLoadedBy { get; set; }
+    public string? WarehouseVerifiedBy { get; set; }
+    public DateTime? WarehouseLoadedAtUtc { get; set; }
+    public string? WarehouseVehicleNumber { get; set; }
+    public string? WarehouseRemarks { get; set; }
+    public DateTime? DeliveredAtUtc { get; set; }
+    public string? DeliveredByName { get; set; }
+    public string? DeliveryRemarks { get; set; }
     public string? EInvoiceIrn { get; set; }
     public string? EWayBillNumber { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
