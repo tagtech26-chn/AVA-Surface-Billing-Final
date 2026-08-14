@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, PackageCheck, Truck, CreditCard } from 'lucide-react';
+import { CheckCircle2, PackageCheck, Truck, CreditCard, Printer } from 'lucide-react';
 import { UserProfile } from '../types';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 
@@ -9,6 +9,7 @@ interface WorkflowInvoice {
   invoiceDate: string;
   grandTotal: number;
   workflowStatus: string;
+  paymentMethodRequested?: string;
   paymentMethodConfirmed?: string;
   paymentSpecificReference?: string;
   customer?: { name?: string; phone?: string };
@@ -17,9 +18,13 @@ interface WorkflowInvoice {
   lines?: Array<{ quantity: number; product?: { name?: string; sku?: string; unit?: string } }>;
 }
 
-interface Props { activeUser: UserProfile; currencySymbol: string; }
+interface Props {
+  activeUser: UserProfile;
+  currencySymbol: string;
+  onPaymentConfirmed?: (invoice: WorkflowInvoice) => void;
+}
 
-export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbol }) => {
+export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbol, onPaymentConfirmed }) => {
   const isAccounts = activeUser.role === 'ACCOUNTANT';
   const isWarehouse = activeUser.role === 'WAREHOUSE';
   const [backendUserId, setBackendUserId] = useState('');
@@ -67,18 +72,52 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
 
   const selected = invoices.find((invoice) => invoice.id === selectedId);
 
+  const openPayment = (invoice: WorkflowInvoice) => {
+    setSelectedId(invoice.id);
+    setMethod((invoice.paymentMethodRequested || 'CASH').toUpperCase());
+    setAmount(String(invoice.grandTotal));
+    setReference('');
+    setBankName('');
+    setCardLast4('');
+    setUtr('');
+    setRemarks('');
+  };
+
   const confirmPayment = async () => {
     if (!selected) return;
-    if (!backendUserId) { setMessage('Workflow user identity is not available.'); return; }
-    if (!amount || Number(amount) <= 0 || !reference.trim()) { setMessage('Amount and payment-specific reference are required.'); return; }
+    if (!backendUserId) { setMessage('Accounts user identity is not available.'); return; }
+    if (!amount || Number(amount) <= 0) { setMessage('Payment amount must be greater than zero.'); return; }
+    if (!reference.trim()) { setMessage('Payment receipt/reference is required at Accounts confirmation.'); return; }
     if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) { setMessage('Enter the last 4 digits for the card payment.'); return; }
+    if ((method === 'UPI_QR' || method === 'BANK_TRANSFER') && !utr.trim()) { setMessage('UTR / transaction ID is required for this payment method.'); return; }
+
     const response = await fetch(`/api/invoice-workflow/${selected.id}/confirm-payment`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: backendUserId, amount: Number(amount), method, specificReference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null })
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: backendUserId,
+        amount: Number(amount),
+        method,
+        specificReference: reference.trim(),
+        bankName: bankName.trim() || null,
+        cardLast4: cardLast4.trim() || null,
+        utr: utr.trim() || null,
+        remarks: remarks.trim() || null
+      })
     });
+
     if (!response.ok) { setMessage(await response.text()); return; }
-    setMessage('Payment confirmed. Invoice released to Warehouse.');
-    setSelectedId(null); setAmount(''); setReference(''); setBankName(''); setCardLast4(''); setUtr(''); setRemarks('');
+
+    const confirmed = await response.json() as WorkflowInvoice;
+    setMessage('Payment confirmed by Accounts. Invoice is now PRINT READY and released to Warehouse.');
+    onPaymentConfirmed?.(confirmed);
+    setSelectedId(null);
+    setAmount('');
+    setReference('');
+    setBankName('');
+    setCardLast4('');
+    setUtr('');
+    setRemarks('');
     await loadInvoices();
   };
 
@@ -122,11 +161,48 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
             return (
               <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  <div className="space-y-1"><div className="flex items-center gap-2"><span className="font-mono font-black text-white">{invoice.invoiceNumber}</span><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">{invoice.workflowStatus}</span></div><div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div><div className="text-[11px] text-slate-400">Salesperson: {invoice.salespersonName || '—'} {invoice.salespersonMobile ? `· ${invoice.salespersonMobile}` : ''}</div><div className="text-[11px] text-slate-400">{formatDateTime(invoice.invoiceDate)} · {invoice.lines?.length || 0} line items</div></div>
-                  <div className="flex items-center gap-3"><span className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</span>{isAccounts && <button onClick={() => { setSelectedId(isSelected ? null : invoice.id); setAmount(String(invoice.grandTotal)); }} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">Confirm Payment</button>}{isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <button onClick={() => setSelectedId(isSelected ? null : invoice.id)} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-bold text-white">Load Invoice</button>}{isWarehouse && invoice.workflowStatus === 'LOADED' && <button onClick={() => void markDelivered(invoice.id)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-bold text-white">Mark Delivered</button>}</div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2"><span className="font-mono font-black text-white">{invoice.invoiceNumber}</span><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">{invoice.workflowStatus}</span></div>
+                    <div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div>
+                    <div className="text-[11px] text-slate-400">Salesperson: {invoice.salespersonName || '—'} {invoice.salespersonMobile ? `· ${invoice.salespersonMobile}` : ''}</div>
+                    {isAccounts && <div className="text-[11px] text-slate-400">Payment requested: <strong className="text-slate-200">{invoice.paymentMethodRequested || 'CASH'}</strong></div>}
+                    <div className="text-[11px] text-slate-400">{formatDateTime(invoice.invoiceDate)} · {invoice.lines?.length || 0} line items</div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</span>
+                    {isAccounts && <button onClick={() => openPayment(invoice)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">Confirm Payment</button>}
+                    {isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <button onClick={() => setSelectedId(isSelected ? null : invoice.id)} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-bold text-white">Load Invoice</button>}
+                    {isWarehouse && invoice.workflowStatus === 'LOADED' && <button onClick={() => void markDelivered(invoice.id)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-bold text-white">Mark Delivered</button>}
+                  </div>
                 </div>
-                {isSelected && isAccounts && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><select value={method} onChange={(e) => setMethod(e.target.value)} className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"><option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI_QR">UPI</option><option value="BANK_TRANSFER">Bank Transfer</option></select><input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" placeholder="Amount" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Receipt / reference number *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>{method === 'CARD' && <input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0,4))} placeholder="Card last 4 digits *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}{(method === 'UPI_QR' || method === 'BANK_TRANSFER') && <input value={utr} onChange={(e) => setUtr(e.target.value)} placeholder="UTR / transaction ID" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}{method === 'BANK_TRANSFER' && <input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="Bank name" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}<textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Accounts remarks" className="md:col-span-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><button onClick={() => void confirmPayment()} className="md:col-span-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4"/>Confirm Payment & Release to Warehouse</button></div>}
-                {isSelected && isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><input value={loadedBy} onChange={(e) => setLoadedBy(e.target.value)} placeholder="Loaded By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><input value={verifiedBy} onChange={(e) => setVerifiedBy(e.target.value)} placeholder="Verified By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><input value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())} placeholder="Vehicle Number" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><textarea value={warehouseRemarks} onChange={(e) => setWarehouseRemarks(e.target.value)} placeholder="Warehouse loading remarks" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><button onClick={() => void markLoaded()} className="md:col-span-2 px-4 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><Truck className="w-4 h-4"/>Mark Loaded & Verified</button></div>}
+
+                {isSelected && isAccounts && (
+                  <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <select value={method} onChange={(e) => setMethod(e.target.value)} className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white">
+                      <option value="CASH">Cash Collection</option>
+                      <option value="CARD">Credit / Debit Card</option>
+                      <option value="UPI_QR">UPI</option>
+                      <option value="BANK_TRANSFER">Bank Transfer</option>
+                    </select>
+                    <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" placeholder="Amount" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>
+                    <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder={method === 'CASH' ? 'Cash receipt/reference *' : 'Receipt / payment reference *'} className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>
+                    {method === 'CARD' && <input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0,4))} placeholder="Card last 4 digits *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}
+                    {(method === 'UPI_QR' || method === 'BANK_TRANSFER') && <input value={utr} onChange={(e) => setUtr(e.target.value)} placeholder="UTR / transaction ID *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}
+                    {method === 'BANK_TRANSFER' && <input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="Bank name" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}
+                    <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Accounts remarks" className="md:col-span-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>
+                    <button onClick={() => void confirmPayment()} className="md:col-span-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4"/>Confirm Payment &amp; Make Print Ready <Printer className="w-4 h-4"/></button>
+                  </div>
+                )}
+
+                {isSelected && isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && (
+                  <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input value={loadedBy} onChange={(e) => setLoadedBy(e.target.value)} placeholder="Loaded By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>
+                    <input value={verifiedBy} onChange={(e) => setVerifiedBy(e.target.value)} placeholder="Verified By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>
+                    <input value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())} placeholder="Vehicle Number" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>
+                    <textarea value={warehouseRemarks} onChange={(e) => setWarehouseRemarks(e.target.value)} placeholder="Warehouse loading remarks" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>
+                    <button onClick={() => void markLoaded()} className="md:col-span-2 px-4 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><Truck className="w-4 h-4"/>Mark Loaded &amp; Verified</button>
+                  </div>
+                )}
               </div>
             );
           })}
