@@ -83,7 +83,8 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         if (requestedMethod == "CARD" && !System.Text.RegularExpressions.Regex.IsMatch(request.CardLast4 ?? string.Empty, "^\\d{4}$"))
             return BadRequest("Card last 4 digits are required for card payment.");
 
-        if (requestedMethod is "UPI_QR" or "BANK_TRANSFER") && string.IsNullOrWhiteSpace(request.Utr))
+        if ((requestedMethod is "UPI_QR" or "BANK_TRANSFER") &&
+            string.IsNullOrWhiteSpace(request.Utr))
             return BadRequest("UTR / transaction ID is required for this payment method.");
 
         invoice.PaymentConfirmedByUserId = accountsUser.Id;
