@@ -51,26 +51,148 @@ export default function App() {
     setAuditLogs((prev) => [entry, ...prev]);
   };
 
-  const handleCompleteInvoice = (newInvoice: Invoice, updatedProducts: Product[], updatedCustomer?: Customer) => {
-    const invoiceNumber = newInvoice.invoiceNumber?.trim();
+  const handleCompleteInvoice = async (newInvoice: Invoice, updatedProducts: Product[], updatedCustomer?: Customer) => {
     const customer = updatedCustomer || newInvoice.customer;
     const customerName = customer?.name?.trim();
     const customerPhone = customer?.phone?.trim();
-    const customerAddress = customer?.address?.trim();
+    const customerAddress = customer?.address?.trim() || customer?.billingAddress?.trim();
 
-    if (!invoiceNumber) { window.alert('Invoice number is required before saving the bill.'); return; }
     if (!customerName) { window.alert('Customer name is required. Walk-in/blank customer bills are not allowed.'); return; }
     if (!customerPhone) { window.alert('Customer mobile number is required before saving the bill.'); return; }
     if (!customerAddress || customerAddress === 'Registered Business GST Address') { window.alert('Customer billing address is required before saving the bill.'); return; }
     if (!newInvoice.items?.length) { window.alert('At least one invoice item is required.'); return; }
+    if (!newInvoice.salespersonName?.trim() || !newInvoice.salespersonMobile?.trim()) { window.alert('Salesperson name and mobile are required before saving the bill.'); return; }
 
-    const invoiceWithDelivery: Invoice = { ...newInvoice, invoiceNumber, customer, deliveryStatus: 'PENDING_DISPATCH' };
-    setInvoices((prev) => [invoiceWithDelivery, ...prev]);
-    setProducts(updatedProducts);
-    if (updatedCustomer) setCustomers((prev) => prev.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)));
+    try {
+      const companiesResponse = await fetch('/api/companies');
+      if (!companiesResponse.ok) throw new Error(`Company API HTTP ${companiesResponse.status}`);
+      const companies = await companiesResponse.json() as Array<{ id: string; legalName: string; gstin?: string; isActive: boolean }>;
+      const activeCompanies = companies.filter((company) => company.isActive !== false);
+      const company = activeCompanies.find((candidate) =>
+        candidate.gstin && storeDetails.taxRegistrationNumber &&
+        candidate.gstin.toUpperCase() === storeDetails.taxRegistrationNumber.toUpperCase()
+      ) || activeCompanies[0];
 
-    logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}).`, invoiceWithDelivery.invoiceNumber, invoiceWithDelivery.id, 'Draft Bill', `Paid ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}`);
-    setPrintingInvoice(invoiceWithDelivery);
+      if (!company?.id) throw new Error('No active company is configured in the billing database.');
+
+      const salespersonsResponse = await fetch('/api/salespersons');
+      if (!salespersonsResponse.ok) throw new Error(`Salesperson API HTTP ${salespersonsResponse.status}`);
+      const serverSalespersons = await salespersonsResponse.json() as Array<{ id: string; name: string; mobile: string; isActive: boolean }>;
+      const salesperson = serverSalespersons.find((candidate) =>
+        candidate.isActive !== false &&
+        candidate.name.trim().toLowerCase() === newInvoice.salespersonName!.trim().toLowerCase() &&
+        candidate.mobile.replace(/\D/g, '') === newInvoice.salespersonMobile!.replace(/\D/g, '')
+      );
+
+      if (!salesperson?.id) throw new Error('Selected salesperson is not available in the backend salesperson master.');
+
+      let serverCustomerId: string | undefined;
+      if (customer?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(customer.id)) {
+        serverCustomerId = customer.id;
+      } else {
+        const customerListResponse = await fetch('/api/customers');
+        if (!customerListResponse.ok) throw new Error(`Customer API HTTP ${customerListResponse.status}`);
+        const serverCustomers = await customerListResponse.json() as Array<{ id: string; companyId: string; name: string; phone?: string; gstin?: string; customerType: string; isActive: boolean }>;
+        const phoneDigits = (customer?.phone || '').replace(/\D/g, '');
+        const gstin = (customer?.gstNumber || '').trim().toUpperCase();
+        const existing = serverCustomers.find((candidate) =>
+          candidate.isActive !== false &&
+          candidate.companyId === company.id &&
+          ((gstin && candidate.gstin?.toUpperCase() === gstin) || (phoneDigits && (candidate.phone || '').replace(/\D/g, '') === phoneDigits) || candidate.name.trim().toLowerCase() === customer!.name.trim().toLowerCase())
+        );
+
+        if (existing) {
+          serverCustomerId = existing.id;
+        } else {
+          const code = `POS-${Date.now()}`;
+          const customerType = customer?.customerType === 'LEDGER' ? 'B2B' : 'B2C';
+          const customerCreateResponse = await fetch('/api/customers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              companyId: company.id,
+              code,
+              name: customer!.name.trim(),
+              phone: customer!.phone?.trim() || null,
+              email: customer!.email?.trim() || null,
+              gstin: gstin || null,
+              address: customerAddress,
+              billingAddress: customer!.billingAddress?.trim() || customerAddress,
+              shippingAddress: customer!.shippingAddress?.trim() || customerAddress,
+              city: customer!.city?.trim() || null,
+              state: customer!.state?.trim() || null,
+              stateCode: customerType === 'B2B' ? (customer!.stateCode?.trim() || null) : null,
+              customerType,
+              isActive: true
+            })
+          });
+
+          if (!customerCreateResponse.ok) {
+            const details = await customerCreateResponse.text();
+            throw new Error(`Customer synchronization failed: ${details}`);
+          }
+
+          const createdCustomer = await customerCreateResponse.json() as { id: string };
+          serverCustomerId = createdCustomer.id;
+        }
+      }
+
+      const backendLines = newInvoice.items.map((item) => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+        discountPercent: Number(item.discountPercent || 0)
+      }));
+
+      const branchManagerUserId = newInvoice.branchManagerUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(newInvoice.branchManagerUserId)
+        ? newInvoice.branchManagerUserId
+        : null;
+
+      const invoiceResponse = await fetch('/api/invoices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId: company.id,
+          customerId: serverCustomerId || null,
+          salespersonId: salesperson.id,
+          invoiceNumber: null,
+          invoiceDate: newInvoice.date,
+          lines: backendLines,
+          promotionCodes: newInvoice.promoCodeApplied ? [newInvoice.promoCodeApplied] : [],
+          branchManagerDiscountPercent: Number(newInvoice.branchManagerDiscountPercent || 0),
+          branchManagerUserId,
+          branchManagerRemarks: newInvoice.branchManagerRemarks || null,
+          interState: false,
+          roundTo: 5
+        })
+      });
+
+      if (!invoiceResponse.ok) {
+        const details = await invoiceResponse.text();
+        throw new Error(`Invoice backend save failed: ${details}`);
+      }
+
+      const persisted = await invoiceResponse.json() as { id: string; invoiceNumber: string; grandTotal: number };
+      const invoiceWithDelivery: Invoice = {
+        ...newInvoice,
+        id: persisted.id || newInvoice.id,
+        invoiceNumber: persisted.invoiceNumber,
+        customer,
+        status: 'UNPAID',
+        amountPaid: 0,
+        paymentsHistory: [],
+        deliveryStatus: 'PENDING_DISPATCH'
+      };
+
+      setInvoices((prev) => [invoiceWithDelivery, ...prev]);
+      setProducts(updatedProducts);
+      if (updatedCustomer) setCustomers((prev) => prev.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)));
+
+      logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}). Payment remains pending Accounts confirmation.`, invoiceWithDelivery.invoiceNumber, invoiceWithDelivery.id, 'Draft Bill', 'PAYMENT_PENDING');
+      setPrintingInvoice(invoiceWithDelivery);
+    } catch (error) {
+      console.error('Backend invoice save failed:', error);
+      window.alert(error instanceof Error ? error.message : 'Unable to save invoice to the backend.');
+    }
   };
 
   const handleUpdateDeliveryStatus = (invoiceId: string, deliveryStatus: DeliveryStatus, dispatchDetails?: { driverName?: string; driverPhone?: string; vehicleNumber?: string; transporterName?: string; trackingNumber?: string; deliveryNotes?: string; }) => {
@@ -184,7 +306,7 @@ export default function App() {
           {activeTab === 'pos' && <PosBillingView products={products} customers={customers} promos={promos} activeUser={activeUser} storeDetails={storeDetails} onCompleteInvoice={handleCompleteInvoice} onAddNewCustomer={handleAddNewCustomer} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'inventory' && <InventoryView products={products} onSaveProduct={handleSaveProduct} onStockAdjustment={handleStockAdjustment} stockLogs={stockLogs} userRole={activeUser.role} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'accounts' && <InvoiceWorkflowView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} />}
-          {activeTab === 'warehouse' && <WarehouseView invoices={invoices} products={products} storeDetails={storeDetails} onUpdateDeliveryStatus={handleUpdateDeliveryStatus} />}
+          {activeTab === 'warehouse' && <InvoiceWorkflowView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'promos' && <PromosView promos={promos} onSavePromo={handleSavePromo} onTogglePromoActive={handleTogglePromoActive} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'invoices' && <InvoicesView invoices={invoices} onRecordPayment={handleRecordInvoicePayment} onProcessRefund={handleProcessRefund} onSelectInvoiceToPrint={(inv) => setPrintingInvoice(inv)} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'eway' && <EWayInvoiceView invoices={invoices} storeDetails={storeDetails} onUpdateEWayDetails={handleUpdateEWayDetails} />}
