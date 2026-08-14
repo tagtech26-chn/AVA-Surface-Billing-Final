@@ -18,30 +18,9 @@ public sealed class BillingMasterSeedService(BillingDbContext db)
 
         var salespersons = new[]
         {
-            new Salesperson
-            {
-                CompanyId = company.Id,
-                Code = "SP001",
-                Name = "Arun Kumar",
-                Mobile = "9876543210",
-                IsActive = true
-            },
-            new Salesperson
-            {
-                CompanyId = company.Id,
-                Code = "SP002",
-                Name = "Priya Sharma",
-                Mobile = "9876543211",
-                IsActive = true
-            },
-            new Salesperson
-            {
-                CompanyId = company.Id,
-                Code = "SP003",
-                Name = "Vignesh Raj",
-                Mobile = "9876543212",
-                IsActive = true
-            }
+            new Salesperson { CompanyId = company.Id, Code = "SP001", Name = "Arun Kumar", Mobile = "9876543210", IsActive = true },
+            new Salesperson { CompanyId = company.Id, Code = "SP002", Name = "Priya Sharma", Mobile = "9876543211", IsActive = true },
+            new Salesperson { CompanyId = company.Id, Code = "SP003", Name = "Vignesh Raj", Mobile = "9876543212", IsActive = true }
         };
 
         foreach (var salesperson in salespersons)
@@ -54,50 +33,32 @@ public sealed class BillingMasterSeedService(BillingDbContext db)
                 db.Salespersons.Add(salesperson);
         }
 
+        var workflowUsers = new[]
+        {
+            new AppUser { CompanyId = company.Id, UserName = "branchmanager", DisplayName = "Branch Manager", Role = "BRANCH_MANAGER", IsActive = true },
+            new AppUser { CompanyId = company.Id, UserName = "accounts", DisplayName = "Accounts", Role = "ACCOUNTS", IsActive = true },
+            new AppUser { CompanyId = company.Id, UserName = "warehouse", DisplayName = "Warehouse", Role = "WAREHOUSE", IsActive = true },
+            new AppUser { CompanyId = company.Id, UserName = "admin", DisplayName = "Administrator", Role = "ADMIN", IsActive = true }
+        };
+
+        foreach (var user in workflowUsers)
+        {
+            var exists = await db.AppUsers.AnyAsync(
+                x => x.UserName == user.UserName,
+                cancellationToken);
+
+            if (!exists)
+                db.AppUsers.Add(user);
+        }
+
         var validFrom = DateTime.Today;
         var validTo = validFrom.AddMonths(6);
 
         var promotions = new[]
         {
-            new Promotion
-            {
-                CompanyId = company.Id,
-                Code = "WELCOME5",
-                Name = "Welcome 5%",
-                DiscountPercent = 5m,
-                ValidFrom = validFrom,
-                ValidTo = validTo,
-                IsActive = true,
-                IsCombinable = false,
-                Priority = 10,
-                Remarks = "Standard customer welcome promotion"
-            },
-            new Promotion
-            {
-                CompanyId = company.Id,
-                Code = "SUMMER10",
-                Name = "Summer Season 10%",
-                DiscountPercent = 10m,
-                ValidFrom = validFrom,
-                ValidTo = validTo,
-                IsActive = true,
-                IsCombinable = false,
-                Priority = 20,
-                Remarks = "Seasonal retail promotion"
-            },
-            new Promotion
-            {
-                CompanyId = company.Id,
-                Code = "BULK15",
-                Name = "Bulk Order 15%",
-                DiscountPercent = 15m,
-                ValidFrom = validFrom,
-                ValidTo = validTo,
-                IsActive = true,
-                IsCombinable = false,
-                Priority = 30,
-                Remarks = "Bulk order promotion"
-            }
+            new Promotion { CompanyId = company.Id, Code = "WELCOME5", Name = "Welcome 5%", DiscountPercent = 5m, ValidFrom = validFrom, ValidTo = validTo, IsActive = true, IsCombinable = false, Priority = 10, Remarks = "Standard customer welcome promotion" },
+            new Promotion { CompanyId = company.Id, Code = "SUMMER10", Name = "Summer Season 10%", DiscountPercent = 10m, ValidFrom = validFrom, ValidTo = validTo, IsActive = true, IsCombinable = false, Priority = 20, Remarks = "Seasonal retail promotion" },
+            new Promotion { CompanyId = company.Id, Code = "BULK15", Name = "Bulk Order 15%", DiscountPercent = 15m, ValidFrom = validFrom, ValidTo = validTo, IsActive = true, IsCombinable = false, Priority = 30, Remarks = "Bulk order promotion" }
         };
 
         foreach (var promotion in promotions)
