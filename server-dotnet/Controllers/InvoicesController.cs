@@ -35,6 +35,46 @@ public sealed class InvoicesController(
         return invoice is null ? NotFound() : Ok(invoice);
     }
 
+    [HttpPost("{invoiceId:guid}/request-manager-discount")]
+    public async Task<ActionResult> RequestManagerDiscount(Guid invoiceId, ManagerDiscountRequest request, CancellationToken cancellationToken)
+    {
+        if (request.UserId == Guid.Empty)
+            return BadRequest("Billing user is required.");
+
+        var billingUser = await db.AppUsers.FirstOrDefaultAsync(
+            x => x.Id == request.UserId && x.IsActive && (x.Role == "CASHIER" || x.Role == "BILLING_USER"),
+            cancellationToken);
+        if (billingUser is null)
+            return BadRequest("Only an active Billing/Cashier user can request additional discount approval.");
+
+        var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
+        if (invoice is null) return NotFound();
+        if (invoice.WorkflowStatus != "PAYMENT_PENDING")
+            return BadRequest($"Invoice is currently in workflow state '{invoice.WorkflowStatus}'.");
+
+        if (string.IsNullOrWhiteSpace(request.Remarks))
+            return BadRequest("Reason/remarks are required for an additional discount request.");
+
+        invoice.WorkflowStatus = "MANAGER_APPROVAL_PENDING";
+        invoice.BranchManagerDiscountPercent = 0m;
+        invoice.BranchManagerDiscountAmount = 0m;
+        invoice.BranchManagerUserId = null;
+        invoice.BranchManagerRemarks = request.Remarks.Trim();
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            UserId = billingUser.Id,
+            Action = "INVOICE_MANAGER_DISCOUNT_REQUESTED",
+            EntityName = nameof(Invoice),
+            EntityId = invoice.Id,
+            Details = $"Additional discount requested by {billingUser.DisplayName}. Reason: {request.Remarks.Trim()}",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(invoice);
+    }
+
     [HttpPost]
     public async Task<ActionResult<Invoice>> Create(InvoiceRequest request, CancellationToken cancellationToken)
     {
@@ -151,25 +191,8 @@ public sealed class InvoicesController(
                 true));
         }
 
-        AppUser? branchManager = null;
-        if (request.BranchManagerDiscountPercent > 0)
-        {
-            if (!request.BranchManagerUserId.HasValue)
-                return BadRequest("Branch Manager approval is required for additional discount.");
-
-            if (string.IsNullOrWhiteSpace(request.BranchManagerRemarks))
-                return BadRequest("Branch Manager remarks are required for additional discount.");
-
-            branchManager = await db.AppUsers.FirstOrDefaultAsync(
-                x => x.Id == request.BranchManagerUserId.Value &&
-                     x.IsActive &&
-                     x.Role == "BRANCH_MANAGER" &&
-                     (!x.CompanyId.HasValue || x.CompanyId == request.CompanyId),
-                cancellationToken);
-
-            if (branchManager is null)
-                return BadRequest("Selected Branch Manager is invalid or unauthorized.");
-        }
+        if (request.BranchManagerDiscountPercent > 0 || request.BranchManagerUserId.HasValue)
+            return BadRequest("Cashier/Billing cannot enter or approve an additional Branch Manager discount. Use the manager approval workflow.");
 
         BillingCalculationResult calculation;
         try
@@ -177,7 +200,7 @@ public sealed class InvoicesController(
             calculation = BillingCalculator.Calculate(
                 lineInputs,
                 promotions,
-                request.BranchManagerDiscountPercent,
+                0m,
                 request.InterState,
                 request.RoundTo);
         }
@@ -198,9 +221,8 @@ public sealed class InvoicesController(
                 $"EXEC sp_getapplock @Resource = {lockResource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000",
                 cancellationToken);
 
-            var invoicePrefix = $"AVA-";
             var existingNumbers = await db.Invoices
-                .Where(x => x.CompanyId == request.CompanyId && x.InvoiceNumber.StartsWith(invoicePrefix))
+                .Where(x => x.CompanyId == request.CompanyId && x.InvoiceNumber.StartsWith("AVA-"))
                 .Select(x => x.InvoiceNumber)
                 .ToListAsync(cancellationToken);
 
@@ -226,19 +248,17 @@ public sealed class InvoicesController(
                 SalespersonId = salesperson.Id,
                 Salesperson = salesperson,
                 InvoiceNumber = generatedInvoiceNumber,
-                InvoiceDate = request.InvoiceDate == default ? DateTime.UtcNow : request.InvoiceDate,
+                InvoiceDate = invoiceDate,
                 SalespersonName = salesperson.Name,
                 SalespersonMobile = salesperson.Mobile,
                 SubTotal = calculation.SubTotal,
                 DiscountAmount = calculation.LineDiscountAmount,
                 PromoDiscountPercent = promotions.Sum(x => x.DiscountPercent),
                 PromoDiscountAmount = calculation.PromoDiscountAmount,
-                BranchManagerDiscountPercent = request.BranchManagerDiscountPercent,
-                BranchManagerDiscountAmount = calculation.BranchManagerDiscountAmount,
-                BranchManagerUserId = branchManager?.Id,
-                BranchManagerRemarks = string.IsNullOrWhiteSpace(request.BranchManagerRemarks)
-                    ? null
-                    : request.BranchManagerRemarks.Trim(),
+                BranchManagerDiscountPercent = 0m,
+                BranchManagerDiscountAmount = 0m,
+                BranchManagerUserId = null,
+                BranchManagerRemarks = null,
                 TaxableAmount = calculation.TaxableAmount,
                 CgstAmount = calculation.CgstAmount,
                 SgstAmount = calculation.SgstAmount,
@@ -279,22 +299,16 @@ public sealed class InvoicesController(
 
             db.AuditLogs.Add(new AuditLog
             {
-                UserId = branchManager?.Id,
-                Action = request.BranchManagerDiscountPercent > 0 ? "INVOICE_MANAGER_DISCOUNT_APPROVED" : "INVOICE_CREATED",
+                UserId = null,
+                Action = "INVOICE_CREATED",
                 EntityName = nameof(Invoice),
                 EntityId = invoiceId,
-                Details = request.BranchManagerDiscountPercent > 0
-                    ? $"Branch Manager discount {request.BranchManagerDiscountPercent:0.##}% approved. Remarks: {request.BranchManagerRemarks}"
-                    : $"Invoice created with payment method '{request.PaymentMethodRequested}' pending Accounts confirmation.",
+                Details = $"Invoice created with payment method '{request.PaymentMethodRequested}' pending Accounts confirmation.",
                 CreatedAtUtc = DateTime.UtcNow
             });
 
             await db.SaveChangesAsync(cancellationToken);
-            await monthlyPartitions.MirrorInvoiceAsync(
-                invoice.Id,
-                invoice.InvoiceDate,
-                cancellationToken);
-
+            await monthlyPartitions.MirrorInvoiceAsync(invoice.Id, invoice.InvoiceDate, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
             return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, invoice);
@@ -308,14 +322,9 @@ public sealed class InvoicesController(
 
     private static string? ValidateRequest(InvoiceRequest request)
     {
-        if (request.CompanyId == Guid.Empty)
-            return "CompanyId is required.";
-
-        if (request.InvoiceDate == default)
-            return "Invoice date is required.";
-
-        if (request.SalespersonId == Guid.Empty)
-            return "Salesperson is required.";
+        if (request.CompanyId == Guid.Empty) return "CompanyId is required.";
+        if (request.InvoiceDate == default) return "Invoice date is required.";
+        if (request.SalespersonId == Guid.Empty) return "Salesperson is required.";
 
         var requestedMethod = request.PaymentMethodRequested.Trim().ToUpperInvariant();
         if (requestedMethod is not ("CASH" or "CARD" or "UPI_QR" or "BANK_TRANSFER"))
@@ -329,9 +338,9 @@ public sealed class InvoicesController(
 
     private static bool IsValidGstin(string? gstin)
         => !string.IsNullOrWhiteSpace(gstin) &&
-           Regex.IsMatch(
-               gstin.Trim().ToUpperInvariant(),
-               "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$");
+           Regex.IsMatch(gstin.Trim().ToUpperInvariant(), "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$");
+
+    public sealed record ManagerDiscountRequest(Guid UserId, string Remarks);
 
     public sealed record InvoiceRequest(
         Guid CompanyId,
@@ -348,8 +357,5 @@ public sealed class InvoicesController(
         bool InterState = false,
         decimal RoundTo = 5m);
 
-    public sealed record InvoiceLineRequest(
-        Guid ProductId,
-        decimal Quantity,
-        decimal DiscountPercent = 0m);
+    public sealed record InvoiceLineRequest(Guid ProductId, decimal Quantity, decimal DiscountPercent = 0m);
 }
