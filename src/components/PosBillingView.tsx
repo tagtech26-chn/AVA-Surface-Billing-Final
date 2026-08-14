@@ -88,11 +88,12 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   // Cart State
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [salespersons, setSalespersons] = useState<Array<{ id: string; code: string; name: string; mobile: string; isActive: boolean }>>([]);
+  const [selectedSalespersonId, setSelectedSalespersonId] = useState('');
   const [promoInput, setPromoInput] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<PromoRule | null>(null);
   const [promoError, setPromoError] = useState('');
   const [manualDiscount, setManualDiscount] = useState<number>(0);
-  const [invoiceNumber, setInvoiceNumber] = useState<string>(() => generateInvoiceNumber(1000));
 
   // Customer Type & Ledger GST State
   const [customerType, setCustomerType] = useState<'NORMAL' | 'LEDGER'>('NORMAL');
@@ -123,6 +124,28 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustEmail, setNewCustEmail] = useState('');
   const [newCustTax, setNewCustTax] = useState('');
+
+  const selectedSalesperson = useMemo(
+    () => salespersons.find((person) => person.id === selectedSalespersonId) || null,
+    [salespersons, selectedSalespersonId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/salespersons')
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Salesperson API HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => {
+        if (!cancelled) setSalespersons(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        console.error('Unable to load salesperson master:', error);
+        if (!cancelled) setSalespersons([]);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // Draft Bill Handler - Save current session on hold
   const handleSaveAsDraft = () => {
@@ -680,13 +703,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     setNewCustTax('');
   };
 
-  const handleCheckoutSubmit = () => {
-    if (!invoiceNumber.trim()) {
-      setToastNotification('Invoice number is required before saving the bill.');
-      setTimeout(() => setToastNotification(null), 4000);
-      return;
-    }
-
+  const handleCheckoutSubmit = async () => {
     if (cartItems.length === 0) {
       setToastNotification('Add at least one item before saving the bill.');
       setTimeout(() => setToastNotification(null), 4000);
@@ -711,9 +728,23 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
       return;
     }
 
-    if (!activeUser.phone?.trim()) {
-      setToastNotification('Salesperson mobile number is required for the invoice.');
+    if (!selectedSalesperson) {
+      setToastNotification('Select a salesperson before saving the bill.');
       setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    let finalInvoiceNumber = '';
+    try {
+      const response = await fetch('/api/invoice-number', { method: 'POST' });
+      if (!response.ok) throw new Error(`Invoice numbering API HTTP ${response.status}`);
+      const payload = await response.json();
+      finalInvoiceNumber = String(payload?.invoiceNumber || '').trim();
+      if (!finalInvoiceNumber) throw new Error('Invoice numbering API returned an empty number.');
+    } catch (error) {
+      console.error('Invoice number allocation failed:', error);
+      setToastNotification('Unable to generate the invoice number. The bill was not saved.');
+      setTimeout(() => setToastNotification(null), 5000);
       return;
     }
 
@@ -779,14 +810,14 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
 
     const newInvoice: Invoice = {
       id: generateId('inv'),
-      invoiceNumber: invoiceNumber.trim(),
+      invoiceNumber: finalInvoiceNumber,
       date: new Date().toISOString(),
       dueDate: paymentMethod === 'ON_ACCOUNT' ? dueDateInput : undefined,
       customer: updatedCustomerObj || finalCustomerObj,
       cashierName: activeUser.name,
       cashierRole: activeUser.role,
-      salespersonName: activeUser.name,
-      salespersonMobile: activeUser.phone || '',
+      salespersonName: selectedSalesperson.name,
+      salespersonMobile: selectedSalesperson.mobile,
       items: cartItems,
       subtotal,
       itemDiscountsTotal,
@@ -816,6 +847,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     // Clear cart & state
     setCartItems([]);
     setSelectedCustomer(null);
+    setSelectedSalespersonId('');
     setAppliedPromo(null);
     setManualDiscount(0);
     setCashTendered('');
@@ -939,11 +971,8 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                   onChange={(e) => setQuickUnit(e.target.value as TileQtyUnit)}
                   className="w-full px-2 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                 >
-                  <option value="box">Boxes</option>
-                  <option value="pcs">Nos / Pcs</option>
-                  <option value="sqft">Sq.Ft</option>
-                  <option value="sqmt">Sq.Mt</option>
-                  <option value="set">Set / Pack</option>
+                  <option value="box">Box</option>
+                  <option value="pcs">Nos</option>
                 </select>
               </div>
             </div>
@@ -1434,16 +1463,25 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
           {promoError && <p className="text-[10px] text-rose-400">{promoError}</p>}
         </div>
 
-        {/* Invoice Identity & Salesperson */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-800/80 p-3 rounded-2xl border border-slate-700">
-          <div>
-            <label className="block text-[10px] font-bold text-slate-300 mb-1">Invoice Number *</label>
-            <input type="text" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-xl text-xs text-white font-mono font-bold" placeholder="Invoice Number" />
+        {/* Salesperson Selection */}
+        <div className="bg-slate-800/80 p-3 rounded-2xl border border-slate-700">
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-[10px] font-bold text-slate-300">Salesperson *</label>
+            <span className="text-[10px] text-slate-500">Cashier: {activeUser.name}</span>
           </div>
-          <div>
-            <label className="block text-[10px] font-bold text-slate-300 mb-1">Salesperson</label>
-            <div className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-xl text-xs text-white font-semibold">{activeUser.name} · {activeUser.phone || 'Mobile missing'}</div>
-          </div>
+          <select
+            value={selectedSalespersonId}
+            onChange={(e) => setSelectedSalespersonId(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-900 border border-indigo-500/40 rounded-xl text-xs text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">Select salesperson for this bill</option>
+            {salespersons.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.name} ({person.mobile})
+              </option>
+            ))}
+          </select>
+          {!selectedSalespersonId && <p className="text-[10px] text-amber-400 mt-1">Select a salesperson before checkout.</p>}
         </div>
 
         {/* Payment Method Selector */}

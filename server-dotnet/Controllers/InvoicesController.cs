@@ -49,14 +49,6 @@ public sealed class InvoicesController(
         if (company is null)
             return BadRequest("An active company is required.");
 
-        var duplicateInvoice = await db.Invoices.AnyAsync(
-            x => x.CompanyId == request.CompanyId &&
-                 x.InvoiceNumber == request.InvoiceNumber.Trim(),
-            cancellationToken);
-
-        if (duplicateInvoice)
-            return Conflict("Invoice number already exists for this company.");
-
         Customer? customer = null;
         if (request.CustomerId.HasValue)
         {
@@ -193,6 +185,33 @@ public sealed class InvoicesController(
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            var invoiceDate = request.InvoiceDate == default ? DateTime.UtcNow : request.InvoiceDate;
+            var fiscalStartYear = invoiceDate.Month >= 4 ? invoiceDate.Year : invoiceDate.Year - 1;
+            var fy = $"{fiscalStartYear % 100:00}{(fiscalStartYear + 1) % 100:00}";
+            var lockResource = $"AVASurface.InvoiceSeries.{request.CompanyId}.{fy}";
+
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"EXEC sp_getapplock @Resource = {lockResource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000",
+                cancellationToken);
+
+            var invoicePrefix = $"AVA-";
+            var existingNumbers = await db.Invoices
+                .Where(x => x.CompanyId == request.CompanyId && x.InvoiceNumber.StartsWith(invoicePrefix))
+                .Select(x => x.InvoiceNumber)
+                .ToListAsync(cancellationToken);
+
+            var nextInvoiceNumber = 1;
+            foreach (var existingNumber in existingNumbers)
+            {
+                var parts = existingNumber.Split('-');
+                if (parts.Length != 3 || !parts[0].Equals("AVA", StringComparison.OrdinalIgnoreCase) || !parts[2].Equals(fy, StringComparison.Ordinal))
+                    continue;
+
+                if (int.TryParse(parts[1], out var parsed) && parsed >= nextInvoiceNumber)
+                    nextInvoiceNumber = parsed + 1;
+            }
+
+            var generatedInvoiceNumber = $"AVA-{nextInvoiceNumber:0000}-{fy}";
             var invoiceId = Guid.NewGuid();
             var invoice = new Invoice
             {
@@ -202,7 +221,7 @@ public sealed class InvoicesController(
                 Customer = customer,
                 SalespersonId = salesperson.Id,
                 Salesperson = salesperson,
-                InvoiceNumber = request.InvoiceNumber.Trim(),
+                InvoiceNumber = generatedInvoiceNumber,
                 InvoiceDate = request.InvoiceDate == default ? DateTime.UtcNow : request.InvoiceDate,
                 SalespersonName = salesperson.Name,
                 SalespersonMobile = salesperson.Mobile,
@@ -286,12 +305,6 @@ public sealed class InvoicesController(
         if (request.CompanyId == Guid.Empty)
             return "CompanyId is required.";
 
-        if (string.IsNullOrWhiteSpace(request.InvoiceNumber))
-            return "Invoice number is required.";
-
-        if (request.InvoiceNumber.Trim().Length > 50)
-            return "Invoice number cannot exceed 50 characters.";
-
         if (request.InvoiceDate == default)
             return "Invoice date is required.";
 
@@ -314,7 +327,7 @@ public sealed class InvoicesController(
         Guid CompanyId,
         Guid? CustomerId,
         Guid SalespersonId,
-        string InvoiceNumber,
+        string? InvoiceNumber,
         DateTime InvoiceDate,
         List<InvoiceLineRequest> Lines,
         List<string> PromotionCodes,

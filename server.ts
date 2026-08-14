@@ -49,6 +49,22 @@ const allowedEntities = new Set(Object.keys(entityDefaults));
 
 // Transitional API bridge: product business data is owned by ASP.NET Core + MSSQL.
 // The existing Express/Vite process remains the UI host, but never persists products itself.
+app.use("/api/salespersons", async (req, res, next) => {
+  try {
+    const query = req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : "";
+    const targetUrl = `${DOTNET_API_URL}/api/salespersons${query}`;
+    const upstream = await fetch(targetUrl, { method: req.method });
+    const responseText = await upstream.text();
+    res.status(upstream.status);
+    const upstreamContentType = upstream.headers.get("content-type");
+    if (upstreamContentType) res.set("content-type", upstreamContentType);
+    return res.send(responseText);
+  } catch (error) {
+    console.error("ASP.NET salesperson API proxy failed:", error);
+    return next(error);
+  }
+});
+
 app.use("/api/products", async (req, res, next) => {
   try {
     const targetUrl = `${DOTNET_API_URL}/api/products${req.path === "/" ? "" : req.path}`;
@@ -70,6 +86,40 @@ app.use("/api/products", async (req, res, next) => {
     return res.send(responseText);
   } catch (error) {
     console.error("ASP.NET product API proxy failed:", error);
+    return next(error);
+  }
+});
+
+let invoiceNumberQueue = Promise.resolve();
+
+app.post("/api/invoice-number", async (_req, res, next) => {
+  const task = invoiceNumberQueue.then(async () => {
+    const now = new Date();
+    const fiscalStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const fiscalStart = String(fiscalStartYear).slice(-2);
+    const fiscalEnd = String(fiscalStartYear + 1).slice(-2);
+    const fy = `${fiscalStart}${fiscalEnd}`;
+    const current = await getEntity("invoiceSequence", { fiscalYear: fy, nextNumber: 1 });
+    const nextNumber = current?.fiscalYear === fy && Number(current?.nextNumber) > 0
+      ? Number(current.nextNumber)
+      : 1;
+
+    await saveEntity("invoiceSequence", {
+      fiscalYear: fy,
+      nextNumber: nextNumber + 1,
+      updatedAt: new Date().toISOString()
+    });
+
+    return `AVA-${String(nextNumber).padStart(4, "0")}-${fy}`;
+  });
+
+  invoiceNumberQueue = task.then(() => undefined, () => undefined);
+
+  try {
+    const invoiceNumber = await task;
+    return res.json({ invoiceNumber });
+  } catch (error) {
+    console.error("Invoice number allocation failed:", error);
     return next(error);
   }
 });
