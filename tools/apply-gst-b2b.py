@@ -10,30 +10,158 @@ def replace_once(old: str, new: str, label: str):
     s = s.replace(old, new, 1)
 
 replace_once(
-"""      const res = await lookupGstDetails(targetGst);\n      setGstData(res);\n      if (res.isValid && res.status === 'ACTIVE') {\n        if (!ledgerCustName) {\n          setLedgerCustName(res.tradeName || res.legalName);\n        }\n      }""",
-"""      const res = await lookupGstDetails(targetGst);\n      setGstData(res);\n      if (res.status === 'ACTIVE' && res.isValid) {\n        setLedgerCustName(res.tradeName || res.legalName);\n        setNewCustName(res.tradeName || res.legalName);\n        setNewCustTax(res.gstin);\n        setNewCustBillingAddress(res.address || '');\n        setNewCustState(res.stateName || '');\n        setNewCustStateCode(res.stateCode || '');\n      }""", 'GST handler')
+"  const [gstData, setGstData] = useState<GstLookupResult | null>(null);",
+"  const [gstData, setGstData] = useState<GstLookupResult | null>(null);\n  const [gstManualMode, setGstManualMode] = useState(false);",
+"GST manual state")
 
 replace_once(
-"""    if (!selectedSalesperson) {\n      setToastNotification('Select a salesperson before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }""",
-"""    if (!selectedSalesperson) {\n      setToastNotification('Select a salesperson before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    if (customerType === 'LEDGER') {\n      const verifiedGstin = gstData?.gstin?.trim().toUpperCase();\n      if (!gstInput.trim() || verifiedGstin !== gstInput.trim().toUpperCase() || gstData?.status !== 'ACTIVE' || !gstData?.isValid) {\n        setToastNotification('B2B/Ledger billing requires successful online GSTIN verification with ACTIVE status.');\n        setTimeout(() => setToastNotification(null), 5000);\n        return;\n      }\n    }""", 'checkout GST validation')
+"""      const res = await lookupGstDetails(targetGst);
+      setGstData(res);
+      if (res.status === 'ACTIVE' && res.isValid) {
+        setLedgerCustName(res.tradeName || res.legalName);
+        setNewCustName(res.tradeName || res.legalName);
+        setNewCustTax(res.gstin);
+        setNewCustBillingAddress(res.address || '');
+        setNewCustState(res.stateName || '');
+        setNewCustStateCode(res.stateCode || '');
+      }""",
+"""      const res = await lookupGstDetails(targetGst);
+      setGstData(res);
+      setGstManualMode(false);
+      if (res.status === 'ACTIVE' && res.isValid) {
+        setLedgerCustName(res.tradeName || res.legalName);
+        setNewCustName(res.tradeName || res.legalName);
+        setNewCustTax(res.gstin);
+        setNewCustBillingAddress(res.address || '');
+        setNewCustState(res.stateName || '');
+        setNewCustStateCode(res.stateCode || '');
+      }""",
+"GST verification handler")
 
 replace_once(
-"""    if (!finalCustomerObj && customerType === 'LEDGER' && gstInput.trim()) {\n      // Auto-register ledger customer if entered on the fly\n      finalCustomerObj = onAddNewCustomer({\n        name: ledgerCustName || gstData?.tradeName || gstData?.legalName || `Ledger GST (${gstInput})`,\n        phone: ledgerCustPhone || '+91 99000 00000',\n        customerType: 'LEDGER',\n        gstNumber: gstInput.trim(),\n        gstLegalName: gstData?.legalName,\n        gstTradeName: gstData?.tradeName,\n        gstStatus: gstData?.status || 'ACTIVE',\n        gstState: gstData?.stateName,\n        taxNumber: gstInput.trim(),\n        address: gstData?.address || 'Registered Business GST Address'\n      });\n    }""",
-"""    if (!finalCustomerObj && customerType === 'LEDGER' && gstInput.trim() && gstData?.status === 'ACTIVE') {\n      finalCustomerObj = onAddNewCustomer({\n        name: gstData.tradeName || gstData.legalName,\n        phone: ledgerCustPhone || '',\n        customerType: 'LEDGER',\n        gstNumber: gstData.gstin,\n        gstLegalName: gstData.legalName,\n        gstTradeName: gstData.tradeName,\n        gstStatus: 'ACTIVE',\n        gstState: gstData.stateName,\n        taxNumber: gstData.gstin,\n        address: gstData.address,\n        billingAddress: gstData.address,\n        city: '',\n        state: gstData.stateName,\n        stateCode: gstData.stateCode,\n        shippingAddress: gstData.address\n      });\n    }""", 'verified ledger auto-create')
+"""    if (customerType === 'LEDGER') {
+      const verifiedGstin = gstData?.gstin?.trim().toUpperCase();
+      if (!gstInput.trim() || verifiedGstin !== gstInput.trim().toUpperCase() || gstData?.status !== 'ACTIVE' || !gstData?.isValid) {
+        setToastNotification('B2B/Ledger billing requires successful online GSTIN verification with ACTIVE status.');
+        setTimeout(() => setToastNotification(null), 5000);
+        return;
+      }
+    }""",
+"""    if (customerType === 'LEDGER') {
+      const verifiedGstin = gstData?.gstin?.trim().toUpperCase();
+      const verifiedActive = !!gstInput.trim() && verifiedGstin === gstInput.trim().toUpperCase() && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
+      const manualB2B = gstManualMode && !!gstInput.trim();
+      if (!verifiedActive && !manualB2B) {
+        setToastNotification('Verify the GSTIN first. If verification fails, choose Manual B2B Entry and enter the customer details.');
+        setTimeout(() => setToastNotification(null), 5000);
+        return;
+      }
+    }""",
+"checkout B2B validation")
 
-# Current expanded customer modal: add an explicit GST verification button and status panel.
 replace_once(
-"""                  <label className=\"block text-xs font-medium text-slate-300 mb-1\">GSTIN {newCustType === 'LEDGER' ? '*' : '(Optional)'}</label>\n                  <input\n                    type=\"text\"\n                    value={newCustTax}\n                    onChange={(e) => setNewCustTax(e.target.value.toUpperCase())}\n                    placeholder=\"24AAAAA1234A1Z5\"\n                    maxLength={15}\n                    className=\"w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono uppercase\"\n                  />""",
-"""                  <label className=\"block text-xs font-medium text-emerald-300 mb-1\">GSTIN {newCustType === 'LEDGER' ? '*' : '(Optional)'}</label>\n                  <div className=\"flex gap-2\">\n                    <input\n                      type=\"text\"\n                      value={newCustTax}\n                      onChange={(e) => { setNewCustTax(e.target.value.toUpperCase()); setGstInput(e.target.value.toUpperCase()); setGstData(null); }}\n                      placeholder=\"24AAAAA1234A1Z5\"\n                      maxLength={15}\n                      className=\"flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono uppercase\"\n                    />\n                    {newCustType === 'LEDGER' && (\n                      <button type=\"button\" onClick={() => handleVerifyGst(newCustTax)} disabled={isVerifyingGst || !newCustTax.trim()} className=\"px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl\">\n                        {isVerifyingGst ? 'Checking…' : 'Verify'}\n                      </button>\n                    )}\n                  </div>\n                  {newCustType === 'LEDGER' && gstData && (\n                    <div className={`mt-2 p-2 rounded-xl border text-[10px] ${gstData.status === 'ACTIVE' ? 'bg-emerald-950 border-emerald-500/50 text-emerald-200' : 'bg-rose-950 border-rose-500/50 text-rose-200'}`}>\n                      <strong>{gstData.status}</strong> — {gstData.message}\n                    </div>\n                  )}""", 'expanded customer GST verification')
+"""    if (!finalCustomerObj && customerType === 'LEDGER' && gstInput.trim() && gstData?.status === 'ACTIVE') {
+      finalCustomerObj = onAddNewCustomer({
+        name: gstData.tradeName || gstData.legalName,
+        phone: ledgerCustPhone || '',
+        customerType: 'LEDGER',
+        gstNumber: gstData.gstin,
+        gstLegalName: gstData.legalName,
+        gstTradeName: gstData.tradeName,
+        gstStatus: 'ACTIVE',
+        gstState: gstData.stateName,
+        taxNumber: gstData.gstin,
+        address: gstData.address,
+        billingAddress: gstData.address,
+        city: '',
+        state: gstData.stateName,
+        stateCode: gstData.stateCode,
+        shippingAddress: gstData.address
+      });
+    }""",
+"""    if (!finalCustomerObj && customerType === 'LEDGER' && gstInput.trim()) {
+      const verifiedActive = gstData?.status === 'ACTIVE' && gstData?.isValid && gstData?.gstin?.toUpperCase() === gstInput.trim().toUpperCase();
+      if (verifiedActive) {
+        finalCustomerObj = onAddNewCustomer({
+          name: gstData.tradeName || gstData.legalName,
+          phone: ledgerCustPhone || '',
+          customerType: 'LEDGER',
+          gstNumber: gstData.gstin,
+          gstLegalName: gstData.legalName,
+          gstTradeName: gstData.tradeName,
+          gstStatus: 'ACTIVE',
+          gstState: gstData.stateName,
+          taxNumber: gstData.gstin,
+          address: gstData.address,
+          billingAddress: gstData.address,
+          city: '',
+          state: gstData.stateName,
+          stateCode: gstData.stateCode,
+          shippingAddress: gstData.address
+        });
+      } else if (gstManualMode) {
+        finalCustomerObj = onAddNewCustomer({
+          name: newCustName.trim(),
+          phone: newCustPhone.trim(),
+          email: newCustEmail.trim() || undefined,
+          customerType: 'LEDGER',
+          gstNumber: gstInput.trim().toUpperCase(),
+          gstLegalName: newCustName.trim(),
+          gstTradeName: newCustName.trim(),
+          gstStatus: 'UNVERIFIED',
+          gstState: newCustState.trim(),
+          taxNumber: gstInput.trim().toUpperCase(),
+          address: newCustBillingAddress.trim(),
+          billingAddress: newCustBillingAddress.trim(),
+          city: newCustCity.trim(),
+          state: newCustState.trim(),
+          stateCode: newCustStateCode.trim(),
+          shippingAddress: (shippingSameAsBilling ? newCustBillingAddress : newCustShippingAddress).trim()
+        });
+      }
+    }""",
+"manual B2B customer fallback")
 
 replace_once(
-"""                  value={newCustName}\n                  onChange={(e) => setNewCustName(e.target.value)}""",
-"""                  value={newCustName}\n                  readOnly={newCustType === 'LEDGER' && gstData?.status === 'ACTIVE'}\n                  onChange={(e) => setNewCustName(e.target.value)}""", 'verified customer name readonly')
+"""    if (newCustType === 'LEDGER' && (!gstin || gstData?.gstin !== gstin || gstData?.status !== 'ACTIVE' || !gstData?.isValid)) {
+      setToastNotification('Verify the GSTIN online and confirm ACTIVE status before saving a B2B/Ledger customer.');
+      setTimeout(() => setToastNotification(null), 5000);
+      return;
+    }""",
+"""    if (newCustType === 'LEDGER') {
+      const verifiedActive = !!gstin && gstData?.gstin?.toUpperCase() === gstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
+      if (!verifiedActive && !gstManualMode) {
+        setToastNotification('GSTIN verification failed or is unavailable. Choose Manual B2B Entry to enter the customer details manually.');
+        setTimeout(() => setToastNotification(null), 5000);
+        return;
+      }
+    }""",
+"customer modal B2B fallback validation")
 
-# Require online ACTIVE verification before creating a Ledger customer from the modal.
+# Add manual-entry button after the GST status panel.
 replace_once(
-"""    if (newCustType === 'LEDGER' && !gstin) {\n      setToastNotification('GSTIN is mandatory for a Ledger (B2B) customer.');\n      setTimeout(() => setToastNotification(null), 4500);\n      return;\n    }""",
-"""    if (newCustType === 'LEDGER' && (!gstin || gstData?.gstin !== gstin || gstData?.status !== 'ACTIVE' || !gstData?.isValid)) {\n      setToastNotification('Verify the GSTIN online and confirm ACTIVE status before saving a B2B/Ledger customer.');\n      setTimeout(() => setToastNotification(null), 5000);\n      return;\n    }""", 'customer modal validation')
+"""                  {newCustType === 'LEDGER' && gstData && (
+                    <div className={`mt-2 p-2 rounded-xl border text-[10px] ${gstData.status === 'ACTIVE' ? 'bg-emerald-950 border-emerald-500/50 text-emerald-200' : 'bg-rose-950 border-rose-500/50 text-rose-200'}`}>
+                      <strong>{gstData.status}</strong> — {gstData.message}
+                    </div>
+                  )}""",
+"""                  {newCustType === 'LEDGER' && gstData && (
+                    <div className={`mt-2 p-2 rounded-xl border text-[10px] ${gstData.status === 'ACTIVE' ? 'bg-emerald-950 border-emerald-500/50 text-emerald-200' : 'bg-rose-950 border-rose-500/50 text-rose-200'}`}>
+                      <strong>{gstData.status}</strong> — {gstData.message}
+                      {gstData.status !== 'ACTIVE' && (
+                        <button type=\"button\" onClick={() => setGstManualMode(true)} className=\"ml-2 px-2 py-1 rounded-lg bg-amber-600 text-white font-bold\">Manual B2B Entry</button>
+                      )}
+                    </div>
+                  )}
+                  {newCustType === 'LEDGER' && gstManualMode && (
+                    <div className=\"mt-2 p-2 rounded-xl bg-amber-950/40 border border-amber-500/40 text-[10px] text-amber-200\">
+                      GST verification was unavailable. You may enter B2B customer details manually. The customer will be stored as <strong>UNVERIFIED</strong> and should be re-verified later.
+                    </div>
+                  )}""",
+"manual B2B UI")
+
+# Do not make business fields read-only in manual mode.
+s = s.replace("readOnly={newCustType === 'LEDGER' && gstData?.status === 'ACTIVE'}", "readOnly={newCustType === 'LEDGER' && gstData?.status === 'ACTIVE' && !gstManualMode}")
 
 p.write_text(s, encoding='utf-8')
-print('B2B GST verification flow patched.')
+print('Manual B2B fallback patch applied.')
