@@ -40,14 +40,15 @@ export function canPerformAction(
 ): boolean {
   switch (role) {
     case 'ADMIN':
-      return true;
+      return action !== 'CREATE_POS_BILL' && action !== 'REQUEST_MANAGER_DISCOUNT';
     case 'MANAGER':
-      return action !== 'MANAGE_USERS';
+      return action !== 'MANAGE_USERS' && action !== 'CREATE_POS_BILL' && action !== 'REQUEST_MANAGER_DISCOUNT';
     case 'BRANCH_MANAGER':
-      return ['CREATE_POS_BILL', 'MANAGE_PRODUCTS', 'MANAGE_PROMOS', 'VIEW_FINANCIAL_REPORTS', 'PROCESS_REFUND', 'APPROVE_BRANCH_MANAGER_DISCOUNT'].includes(action);
+      return ['MANAGE_PRODUCTS', 'MANAGE_PROMOS', 'VIEW_FINANCIAL_REPORTS', 'PROCESS_REFUND', 'APPROVE_BRANCH_MANAGER_DISCOUNT'].includes(action);
     case 'ACCOUNTANT':
       return ['VIEW_FINANCIAL_REPORTS', 'MANAGE_EXPENSES', 'EXPORT_TALLY', 'MANAGE_EWAY_INVOICE', 'VIEW_AUDIT_LOGS', 'CONFIRM_PAYMENTS'].includes(action);
     case 'CASHIER':
+    case 'BILLING_USER':
       return ['CREATE_POS_BILL', 'MANAGE_PRODUCTS', 'REQUEST_MANAGER_DISCOUNT'].includes(action);
     case 'WAREHOUSE':
       return ['MANAGE_WAREHOUSE', 'MANAGE_PRODUCTS', 'STOCK_ADJUSTMENT', 'MANAGE_EWAY_INVOICE'].includes(action);
