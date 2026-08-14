@@ -1,0 +1,46 @@
+name: Apply salesperson and B2C customer fix
+
+on:
+  push:
+    branches:
+      - feature/dotnet-mssql-server
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/dotnet-mssql-server
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install dotnet-ef
+        run: dotnet tool install --global dotnet-ef --version 9.0.8
+      - name: Add dotnet tools to PATH
+        run: echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+      - name: Apply patch
+        run: python tools/apply-salesperson-b2c-fix.py
+      - name: Verify frontend
+        run: npm run build
+      - name: Verify backend
+        run: dotnet build server-dotnet/AVASurface.Server.csproj
+      - name: Generate EF migration for customer pincode
+        run: dotnet ef migrations add AddCustomerPincode --project server-dotnet/AVASurface.Server.csproj --startup-project server-dotnet/AVASurface.Server.csproj --no-build
+      - name: Commit patch and migration
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/InvoicesView.tsx src/components/PosBillingView.tsx server-dotnet/Domain/Entities.cs server-dotnet/Controllers/InvoicesController.cs server-dotnet/Migrations
+          git rm tools/apply-salesperson-b2c-fix.py .github/workflows/patch-salesperson-b2c.yml
+          git commit -m "fix: use selected salesperson and relax B2C address validation"
+          git push origin HEAD:feature/dotnet-mssql-server
