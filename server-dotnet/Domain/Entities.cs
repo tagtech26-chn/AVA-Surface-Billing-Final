@@ -33,6 +33,7 @@ public sealed class Customer
     public string? City { get; set; }
     public string? State { get; set; }
     public string? StateCode { get; set; }
+    public string? Pincode { get; set; }
     public string CustomerType { get; set; } = "B2C";
     public bool IsActive { get; set; } = true;
 }

@@ -130,6 +130,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [newCustCity, setNewCustCity] = useState('');
   const [newCustState, setNewCustState] = useState('');
   const [newCustStateCode, setNewCustStateCode] = useState('');
+  const [newCustPincode, setNewCustPincode] = useState('');
   const [shippingSameAsBilling, setShippingSameAsBilling] = useState(true);
 
   const selectedSalesperson = useMemo(
@@ -702,8 +703,8 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     const stateCode = newCustStateCode.trim();
     const gstin = newCustTax.trim().toUpperCase();
 
-    if (!name || !phone || !billingAddress || !city || !state || !stateCode) {
-      setToastNotification('Customer name, mobile, billing address, city, state and state code are required.');
+    if (!name || !phone || !billingAddress || !city || !state) {
+      setToastNotification('Customer name, mobile, billing address, city and state are required.');
       setTimeout(() => setToastNotification(null), 4500);
       return;
     }
@@ -727,7 +728,8 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
       shippingAddress: shippingAddress || billingAddress,
       city,
       state,
-      stateCode,
+      stateCode: newCustType === 'LEDGER' ? stateCode : undefined,
+      pincode: newCustPincode.trim() || undefined,
       gstState: state,
       gstAddress: billingAddress
     });
@@ -743,6 +745,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     setNewCustCity('');
     setNewCustState('');
     setNewCustStateCode('');
+    setNewCustPincode('');
     setShippingSameAsBilling(true);
   };
 
@@ -1824,14 +1827,24 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                     placeholder="State *"
                     className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
                   />
+                  {newCustType === 'LEDGER' && (
+                    <input
+                      required
+                      type="text"
+                      value={newCustStateCode}
+                      onChange={(e) => setNewCustStateCode(e.target.value.toUpperCase())}
+                      placeholder="State Code *"
+                      maxLength={3}
+                      className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs uppercase"
+                    />
+                  )}
                   <input
-                    required
                     type="text"
-                    value={newCustStateCode}
-                    onChange={(e) => setNewCustStateCode(e.target.value.toUpperCase())}
-                    placeholder="State Code *"
-                    maxLength={3}
-                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs uppercase"
+                    value={newCustPincode}
+                    onChange={(e) => setNewCustPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="Pincode (Optional)"
+                    maxLength={6}
+                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
                   />
                 </div>
               </div>

@@ -68,13 +68,17 @@ public sealed class InvoicesController(
                 return BadRequest("Customer billing address is required before saving the invoice.");
 
             if (string.IsNullOrWhiteSpace(customer.City) ||
-                string.IsNullOrWhiteSpace(customer.State) ||
-                string.IsNullOrWhiteSpace(customer.StateCode))
-                return BadRequest("Customer city, state and state code are required before saving the invoice.");
+                string.IsNullOrWhiteSpace(customer.State))
+                return BadRequest("Customer city and state are required before saving the invoice.");
 
-            if (customer.CustomerType.Equals("B2B", StringComparison.OrdinalIgnoreCase) &&
-                !IsValidGstin(customer.Gstin))
-                return BadRequest("A valid GSTIN is required for B2B customers.");
+            if (customer.CustomerType.Equals("B2B", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(customer.StateCode))
+                    return BadRequest("State code is required for B2B customers.");
+
+                if (!IsValidGstin(customer.Gstin))
+                    return BadRequest("A valid GSTIN is required for B2B customers.");
+            }
         }
 
         var salesperson = await db.Salespersons.FirstOrDefaultAsync(
