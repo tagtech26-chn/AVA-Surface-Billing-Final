@@ -1,4 +1,5 @@
 using AVASurface.Server.Infrastructure;
+using AVASurface.Server.Services;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,7 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<BillingDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"), sql =>
         sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null)));
+builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 
 builder.Services.AddCors(options =>
 {
@@ -45,6 +47,12 @@ app.MapGet("/api/health", async (BillingDbContext db) =>
         timestamp = DateTime.UtcNow
     });
 });
+
+using (var scope = app.Services.CreateScope())
+{
+    var partitionService = scope.ServiceProvider.GetRequiredService<MonthlyInvoicePartitionService>();
+    await partitionService.EnsureCurrentMonthAsync();
+}
 
 app.MapControllers();
 
