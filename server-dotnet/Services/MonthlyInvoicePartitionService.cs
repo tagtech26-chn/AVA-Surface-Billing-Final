@@ -12,7 +12,7 @@ public sealed class MonthlyInvoicePartitionService(BillingDbContext db)
     public async Task EnsureMonthAsync(DateTime invoiceDate, CancellationToken cancellationToken = default)
     {
         var names = GetTableNames(invoiceDate);
-        var sql = $"""
+        var sql = $@"
 IF OBJECT_ID(N'dbo.{names.Invoices}', N'U') IS NULL
 BEGIN
     SELECT TOP (0) * INTO dbo.{names.Invoices} FROM dbo.Invoices;
@@ -28,7 +28,7 @@ BEGIN
     CREATE INDEX IX_{names.InvoiceLines}_InvoiceId ON dbo.{names.InvoiceLines} (InvoiceId);
     CREATE INDEX IX_{names.InvoiceLines}_ProductId ON dbo.{names.InvoiceLines} (ProductId);
 END;
-""";
+";
 
         await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
@@ -38,23 +38,24 @@ END;
         await EnsureMonthAsync(invoiceDate, cancellationToken);
         var names = GetTableNames(invoiceDate);
 
-        var sql = $"""
+        const string invoiceIdParameter = "{0}";
+        var sql = $@"
 INSERT INTO dbo.{names.Invoices}
 SELECT *
 FROM dbo.Invoices
-WHERE Id = {{0}}
-  AND NOT EXISTS (SELECT 1 FROM dbo.{names.Invoices} WHERE Id = {{0}});
+WHERE Id = {invoiceIdParameter}
+  AND NOT EXISTS (SELECT 1 FROM dbo.{names.Invoices} WHERE Id = {invoiceIdParameter});
 
 INSERT INTO dbo.{names.InvoiceLines}
 SELECT *
 FROM dbo.InvoiceLines
-WHERE InvoiceId = {{0}}
+WHERE InvoiceId = {invoiceIdParameter}
   AND NOT EXISTS (
       SELECT 1
       FROM dbo.{names.InvoiceLines} existingLines
       WHERE existingLines.Id = InvoiceLines.Id
   );
-""";
+";
 
         await db.Database.ExecuteSqlRawAsync(sql, [invoiceId], cancellationToken);
     }
