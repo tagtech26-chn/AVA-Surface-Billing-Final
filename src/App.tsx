@@ -47,8 +47,27 @@ export default function App() {
   useEffect(() => { Storage.saveAuditLogs(auditLogs); }, [auditLogs]);
 
   const logAudit = (category: AuditCategory, severity: AuditSeverity, action: string, details: string, targetName?: string, targetId?: string, previousValue?: string, newValue?: string) => {
-    const entry = createAuditEntry(category, severity, action, activeUser, details, targetName, targetId, previousValue, newValue);
+    const entry = createAuditEntry(category, severity, action, details, activeUser, targetName, targetId, previousValue, newValue);
     setAuditLogs((prev) => [entry, ...prev]);
+  };
+
+  const handlePaymentConfirmed = (workflowInvoice: { id: string; invoiceNumber: string; grandTotal: number; workflowStatus: string; customer?: { name?: string; phone?: string }; salespersonName?: string; salespersonMobile?: string; }) => {
+    const localInvoice = invoices.find((invoice) => invoice.id === workflowInvoice.id || invoice.invoiceNumber === workflowInvoice.invoiceNumber);
+    if (!localInvoice) {
+      window.alert(`Payment confirmed for ${workflowInvoice.invoiceNumber}. Refreshing local invoice data is required before printing.`);
+      return;
+    }
+
+    const printableInvoice: Invoice = {
+      ...localInvoice,
+      invoiceNumber: workflowInvoice.invoiceNumber,
+      grandTotal: Number(workflowInvoice.grandTotal),
+      status: 'PAID',
+      amountPaid: Number(workflowInvoice.grandTotal),
+      paymentsHistory: localInvoice.paymentsHistory,
+    };
+    setInvoices((prev) => prev.map((invoice) => invoice.id === localInvoice.id ? printableInvoice : invoice));
+    setPrintingInvoice(printableInvoice);
   };
 
   const handleCompleteInvoice = async (newInvoice: Invoice, updatedProducts: Product[], updatedCustomer?: Customer) => {
@@ -158,6 +177,7 @@ export default function App() {
           invoiceDate: newInvoice.date,
           lines: backendLines,
           promotionCodes: newInvoice.promoCodeApplied ? [newInvoice.promoCodeApplied] : [],
+          paymentMethodRequested: newInvoice.paymentMethod,
           branchManagerDiscountPercent: Number(newInvoice.branchManagerDiscountPercent || 0),
           branchManagerUserId,
           branchManagerRemarks: newInvoice.branchManagerRemarks || null,
@@ -187,8 +207,7 @@ export default function App() {
       setProducts(updatedProducts);
       if (updatedCustomer) setCustomers((prev) => prev.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)));
 
-      logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}). Payment remains pending Accounts confirmation.`, invoiceWithDelivery.invoiceNumber, invoiceWithDelivery.id, 'Draft Bill', 'PAYMENT_PENDING');
-      setPrintingInvoice(invoiceWithDelivery);
+      logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}). Payment method ${newInvoice.paymentMethod} remains pending Accounts confirmation.`, invoiceWithDelivery.invoiceNumber, invoiceWithDelivery.id, 'Draft Bill', `PAYMENT_PENDING / ${newInvoice.paymentMethod}`);
     } catch (error) {
       console.error('Backend invoice save failed:', error);
       window.alert(error instanceof Error ? error.message : 'Unable to save invoice to the backend.');
@@ -200,7 +219,7 @@ export default function App() {
   };
 
   const handleUpdateEWayDetails = (invoiceId: string, ewayBillNo: string, irnNo: string, ackNo: string) => {
-    setInvoices((prev) => prev.map((inv) => inv.id === invoiceId ? { ...inv, ewayBillNo, ewayBillDate: new Date().toISOString(), irnNo, ackNo, ackDate: new Date().toISOString() } : inv));
+    setInvoices((prev) => inv.id === invoiceId ? { ...inv, ewayBillNo, ewayBillDate: new Date().toISOString(), irnNo, ackNo, ackDate: new Date().toISOString() } : inv));
   };
 
   const handleAddNewCustomer = (newCustData: Omit<Customer, 'id' | 'loyaltyPoints' | 'totalSpent' | 'outstandingBalance'>): Customer => {
@@ -305,10 +324,10 @@ export default function App() {
         <main className="flex-1 p-4 sm:p-6 pb-20 md:pb-6 overflow-y-auto max-w-7xl mx-auto w-full">
           {activeTab === 'pos' && <PosBillingView products={products} customers={customers} promos={promos} activeUser={activeUser} storeDetails={storeDetails} onCompleteInvoice={handleCompleteInvoice} onAddNewCustomer={handleAddNewCustomer} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'inventory' && <InventoryView products={products} onSaveProduct={handleSaveProduct} onStockAdjustment={handleStockAdjustment} stockLogs={stockLogs} userRole={activeUser.role} currencySymbol={storeDetails.currencySymbol} />}
-          {activeTab === 'accounts' && <InvoiceWorkflowView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} />}
+          {activeTab === 'accounts' && <InvoiceWorkflowView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} onPaymentConfirmed={handlePaymentConfirmed} />}
           {activeTab === 'warehouse' && <InvoiceWorkflowView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'promos' && <PromosView promos={promos} onSavePromo={handleSavePromo} onTogglePromoActive={handleTogglePromoActive} currencySymbol={storeDetails.currencySymbol} />}
-          {activeTab === 'invoices' && <InvoicesView invoices={invoices} onRecordPayment={handleRecordInvoicePayment} onProcessRefund={handleProcessRefund} onSelectInvoiceToPrint={(inv) => setPrintingInvoice(inv)} currencySymbol={storeDetails.currencySymbol} />}
+          {activeTab === 'invoices' && <InvoicesView invoices={invoices} onRecordPayment={handleRecordInvoicePayment} onProcessRefund={handleProcessRefund} onSelectInvoiceToPrint={(inv) => { if (inv.status === 'PAID') setPrintingInvoice(inv); }} currencySymbol={storeDetails.currencySymbol} />}
           {activeTab === 'eway' && <EWayInvoiceView invoices={invoices} storeDetails={storeDetails} onUpdateEWayDetails={handleUpdateEWayDetails} />}
           {activeTab === 'tally' && <TallyIntegrationView invoices={invoices} expenses={expenses} products={products} customers={customers} />}
           {activeTab === 'reports' && <FinancialDashboardView invoices={invoices} expenses={expenses} products={products} onAddExpense={handleAddExpense} currencySymbol={storeDetails.currencySymbol} />}
