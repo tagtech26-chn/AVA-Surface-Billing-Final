@@ -34,13 +34,14 @@ pos = re.sub(
 )
 
 # Only Box and Nos are exposed to the user. Existing internal 'pcs' is displayed as Nos.
-match = re.search(r"<select[^>]*value=\{quickUnit\}[\\s\\S]*?</select>", pos)
+unit_pattern = re.compile(r"(<select\s*\n\s*value=\{quickUnit\}[\s\S]*?</select>)")
+match = unit_pattern.search(pos)
 if not match:
     raise SystemExit("Patch target not found: quick unit selector")
 pos = pos[:match.start()] + """<select
                   value={quickUnit}
                   onChange={(e) => setQuickUnit(e.target.value as TileQtyUnit)}
-                  className=\"w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-semibold\"
+                  className=\"w-full px-2 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer\"
                 >
                   <option value=\"box\">Box</option>
                   <option value=\"pcs\">Nos</option>
