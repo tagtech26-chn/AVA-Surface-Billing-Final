@@ -42,7 +42,7 @@ export const Navigation: React.FC<NavigationProps> = ({
     { id: 'pos', label: 'POS & Billing', shortLabel: 'POS', icon: ShoppingCart, action: 'CREATE_POS_BILL' as const, badge: null },
     { id: 'inventory', label: 'Inventory', shortLabel: 'Stock', icon: Package, action: 'MANAGE_PRODUCTS' as const, badge: lowStockCount > 0 ? `${lowStockCount}` : null, badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
     { id: 'accounts', label: 'Accounts Payment Confirmation', shortLabel: 'Accounts', icon: CreditCard, action: 'CONFIRM_PAYMENTS' as const, badge: unpaidInvoiceCount > 0 ? `${unpaidInvoiceCount}` : null, badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
-    { id: 'warehouse', label: 'Warehouse & Logistics', shortLabel: 'Dispatch', icon: Truck, action: 'MANAGE_WAREHOUSE' as const, badge: pendingDispatchCount > 0 ? `${pendingDispatchCount}` : null, badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
+    { id: userRole === 'WAREHOUSE' ? 'accounts' : 'warehouse', label: userRole === 'WAREHOUSE' ? 'Warehouse Loading & Delivery' : 'Warehouse & Logistics', shortLabel: 'Dispatch', icon: Truck, action: 'MANAGE_WAREHOUSE' as const, badge: pendingDispatchCount > 0 ? `${pendingDispatchCount}` : null, badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
     { id: 'promos', label: 'Promos & Offers', shortLabel: 'Promos', icon: Tag, action: 'MANAGE_PROMOS' as const, badge: activePromoCount > 0 ? `${activePromoCount}` : null, badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
     { id: 'invoices', label: 'Invoices & AR', shortLabel: 'Bills', icon: Receipt, action: 'CREATE_POS_BILL' as const, badge: unpaidInvoiceCount > 0 ? `${unpaidInvoiceCount}` : null, badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
     { id: 'eway', label: 'e-Way & e-Invoicing', shortLabel: 'e-Way', icon: ShieldCheck, action: 'MANAGE_EWAY_INVOICE' as const, badge: null },
@@ -68,7 +68,7 @@ export const Navigation: React.FC<NavigationProps> = ({
     BRANCH_MANAGER: 'Branch billing, inventory, promotions and additional discount approval.',
     CASHIER: 'Billing POS, product lookup and receipt issuing.',
     ACCOUNTANT: 'Financial reports, payment confirmation, expenses, Tally bridge, e-Way and audit review.',
-    WAREHOUSE: 'Dispatch, packing, stock updates and e-Way operations.'
+    WAREHOUSE: 'Dispatch, payment-released invoices, loading verification and delivery confirmation.'
   }[userRole];
 
   return (
@@ -87,7 +87,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
-                <button key={item.id} onClick={() => setActiveTab(item.id)} title={item.label} className={`w-full flex items-center ${isCollapsed ? 'justify-center py-3 px-2' : 'justify-between px-3 py-2.5'} rounded-xl font-medium text-xs transition group ${isActive ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 font-semibold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+                <button key={item.label} onClick={() => setActiveTab(item.id)} title={item.label} className={`w-full flex items-center ${isCollapsed ? 'justify-center py-3 px-2' : 'justify-between px-3 py-2.5'} rounded-xl font-medium text-xs transition group ${isActive ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 font-semibold' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
                   <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'space-x-3'} min-w-0`}>
                     <div className="relative shrink-0">
                       <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-indigo-400'}`} />
@@ -114,7 +114,7 @@ export const Navigation: React.FC<NavigationProps> = ({
         {visibleItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
-          return <button key={item.id} onClick={() => setActiveTab(item.id)} className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition relative shrink-0 ${isActive ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-slate-200'}`}><div className="relative"><Icon className="w-4 h-4" />{item.badge && <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-rose-500" />}</div><span className="text-[9px] mt-0.5 tracking-tight">{item.shortLabel}</span></button>;
+          return <button key={item.label} onClick={() => setActiveTab(item.id)} title={item.label} className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition relative shrink-0 ${isActive ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-slate-200'}`}><div className="relative"><Icon className="w-4 h-4" />{item.badge && <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-rose-500" />}</div><span className="text-[9px] mt-0.5 tracking-tight">{item.shortLabel}</span></button>;
         })}
       </nav>
     </>
