@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Clock, PackageCheck, Truck, CreditCard, Banknote } from 'lucide-react';
+import { CheckCircle2, PackageCheck, Truck, CreditCard } from 'lucide-react';
 import { UserProfile } from '../types';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 
@@ -17,14 +17,12 @@ interface WorkflowInvoice {
   lines?: Array<{ quantity: number; product?: { name?: string; sku?: string; unit?: string } }>;
 }
 
-interface Props {
-  activeUser: UserProfile;
-  currencySymbol: string;
-}
+interface Props { activeUser: UserProfile; currencySymbol: string; }
 
 export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbol }) => {
   const isAccounts = activeUser.role === 'ACCOUNTANT';
   const isWarehouse = activeUser.role === 'WAREHOUSE';
+  const [backendUserId, setBackendUserId] = useState('');
   const [invoices, setInvoices] = useState<WorkflowInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -41,95 +39,69 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [warehouseRemarks, setWarehouseRemarks] = useState('');
 
+  const resolveBackendUser = async () => {
+    const response = await fetch(`/api/invoice-workflow/workflow-user?role=${encodeURIComponent(activeUser.role)}`);
+    if (!response.ok) throw new Error('No backend workflow user is configured for this role.');
+    const user = await response.json();
+    setBackendUserId(String(user.id));
+    return String(user.id);
+  };
+
   const loadInvoices = async () => {
     setLoading(true);
     try {
+      if (!backendUserId) await resolveBackendUser();
       const endpoint = isAccounts ? '/api/invoice-workflow/pending-payments' : '/api/invoice-workflow/warehouse-ready';
       const response = await fetch(endpoint);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setInvoices(await response.json());
     } catch (error) {
       console.error(error);
-      setMessage('Unable to load workflow invoices.');
+      setMessage(error instanceof Error ? error.message : 'Unable to load workflow invoices.');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { void loadInvoices(); }, [activeUser.role]);
+  useEffect(() => { setBackendUserId(''); void loadInvoices(); }, [activeUser.role]);
 
   const selected = invoices.find((invoice) => invoice.id === selectedId);
 
   const confirmPayment = async () => {
     if (!selected) return;
-    if (!amount || Number(amount) <= 0 || !reference.trim()) {
-      setMessage('Amount and payment-specific reference are required.');
-      return;
-    }
-    if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) {
-      setMessage('Enter the last 4 digits for the card payment.');
-      return;
-    }
+    if (!backendUserId) { setMessage('Workflow user identity is not available.'); return; }
+    if (!amount || Number(amount) <= 0 || !reference.trim()) { setMessage('Amount and payment-specific reference are required.'); return; }
+    if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) { setMessage('Enter the last 4 digits for the card payment.'); return; }
     const response = await fetch(`/api/invoice-workflow/${selected.id}/confirm-payment`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: activeUser.id,
-        amount: Number(amount),
-        method,
-        specificReference: reference.trim(),
-        bankName: bankName.trim() || null,
-        cardLast4: cardLast4.trim() || null,
-        utr: utr.trim() || null,
-        remarks: remarks.trim() || null
-      })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: backendUserId, amount: Number(amount), method, specificReference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null })
     });
-    if (!response.ok) {
-      setMessage(await response.text());
-      return;
-    }
+    if (!response.ok) { setMessage(await response.text()); return; }
     setMessage('Payment confirmed. Invoice released to Warehouse.');
-    setSelectedId(null);
-    setAmount(''); setReference(''); setBankName(''); setCardLast4(''); setUtr(''); setRemarks('');
+    setSelectedId(null); setAmount(''); setReference(''); setBankName(''); setCardLast4(''); setUtr(''); setRemarks('');
     await loadInvoices();
   };
 
   const markLoaded = async () => {
-    if (!selected || !loadedBy.trim() || !verifiedBy.trim()) {
-      setMessage('Loaded By and Verified By are required.');
-      return;
-    }
+    if (!selected || !backendUserId) { setMessage('Warehouse user identity is not available.'); return; }
+    if (!loadedBy.trim() || !verifiedBy.trim()) { setMessage('Loaded By and Verified By are required.'); return; }
     const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: activeUser.id,
-        loadedBy: loadedBy.trim(),
-        verifiedBy: verifiedBy.trim(),
-        vehicleNumber: vehicleNumber.trim() || null,
-        remarks: warehouseRemarks.trim() || null
-      })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: backendUserId, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null })
     });
-    if (!response.ok) {
-      setMessage(await response.text());
-      return;
-    }
+    if (!response.ok) { setMessage(await response.text()); return; }
     setMessage('Invoice loaded and verified.');
-    setSelectedId(null);
-    setLoadedBy(''); setVerifiedBy(''); setVehicleNumber(''); setWarehouseRemarks('');
+    setSelectedId(null); setLoadedBy(''); setVerifiedBy(''); setVehicleNumber(''); setWarehouseRemarks('');
     await loadInvoices();
   };
 
   const markDelivered = async (invoiceId: string) => {
+    if (!backendUserId) { setMessage('Warehouse user identity is not available.'); return; }
     const response = await fetch(`/api/invoice-workflow/${invoiceId}/deliver`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: activeUser.id })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: backendUserId })
     });
-    if (!response.ok) {
-      setMessage(await response.text());
-      return;
-    }
+    if (!response.ok) { setMessage(await response.text()); return; }
     setMessage('Invoice marked as delivered.');
     await loadInvoices();
   };
@@ -139,67 +111,22 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5">
         <div className="flex items-center gap-3">
           {isAccounts ? <CreditCard className="w-6 h-6 text-emerald-400" /> : <PackageCheck className="w-6 h-6 text-amber-400" />}
-          <div>
-            <h2 className="text-xl font-black text-white">{isAccounts ? 'Accounts Payment Confirmation' : 'Warehouse Invoice Workflow'}</h2>
-            <p className="text-xs text-slate-400">Logged in as {activeUser.name} · {activeUser.role}</p>
-          </div>
+          <div><h2 className="text-xl font-black text-white">{isAccounts ? 'Accounts Payment Confirmation' : 'Warehouse Invoice Workflow'}</h2><p className="text-xs text-slate-400">Logged in as {activeUser.name} · {activeUser.role}</p></div>
         </div>
       </div>
-
       {message && <div className="p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/30 text-xs text-indigo-200">{message}</div>}
-
-      {loading ? (
-        <div className="p-8 text-center text-slate-400">Loading invoices...</div>
-      ) : invoices.length === 0 ? (
-        <div className="p-10 text-center bg-slate-900 border border-slate-800 rounded-3xl text-slate-500">No invoices waiting at this stage.</div>
-      ) : (
+      {loading ? <div className="p-8 text-center text-slate-400">Loading invoices...</div> : invoices.length === 0 ? <div className="p-10 text-center bg-slate-900 border border-slate-800 rounded-3xl text-slate-500">No invoices waiting at this stage.</div> : (
         <div className="grid gap-4">
           {invoices.map((invoice) => {
             const isSelected = selectedId === invoice.id;
             return (
               <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2"><span className="font-mono font-black text-white">{invoice.invoiceNumber}</span><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">{invoice.workflowStatus}</span></div>
-                    <div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div>
-                    <div className="text-[11px] text-slate-400">Salesperson: {invoice.salespersonName || '—'} {invoice.salespersonMobile ? `· ${invoice.salespersonMobile}` : ''}</div>
-                    <div className="text-[11px] text-slate-400">{formatDateTime(invoice.invoiceDate)} · {invoice.lines?.length || 0} line items</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</span>
-                    {isAccounts && <button onClick={() => { setSelectedId(isSelected ? null : invoice.id); setAmount(String(invoice.grandTotal)); }} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">Confirm Payment</button>}
-                    {isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <button onClick={() => setSelectedId(isSelected ? null : invoice.id)} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-bold text-white">Load Invoice</button>}
-                    {isWarehouse && invoice.workflowStatus === 'LOADED' && <button onClick={() => void markDelivered(invoice.id)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-bold text-white">Mark Delivered</button>}
-                  </div>
+                  <div className="space-y-1"><div className="flex items-center gap-2"><span className="font-mono font-black text-white">{invoice.invoiceNumber}</span><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">{invoice.workflowStatus}</span></div><div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div><div className="text-[11px] text-slate-400">Salesperson: {invoice.salespersonName || '—'} {invoice.salespersonMobile ? `· ${invoice.salespersonMobile}` : ''}</div><div className="text-[11px] text-slate-400">{formatDateTime(invoice.invoiceDate)} · {invoice.lines?.length || 0} line items</div></div>
+                  <div className="flex items-center gap-3"><span className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</span>{isAccounts && <button onClick={() => { setSelectedId(isSelected ? null : invoice.id); setAmount(String(invoice.grandTotal)); }} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">Confirm Payment</button>}{isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <button onClick={() => setSelectedId(isSelected ? null : invoice.id)} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-bold text-white">Load Invoice</button>}{isWarehouse && invoice.workflowStatus === 'LOADED' && <button onClick={() => void markDelivered(invoice.id)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-bold text-white">Mark Delivered</button>}</div>
                 </div>
-
-                {isSelected && isAccounts && (
-                  <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <select value={method} onChange={(e) => setMethod(e.target.value)} className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white">
-                      <option value="CASH">Cash</option>
-                      <option value="CARD">Card</option>
-                      <option value="UPI_QR">UPI</option>
-                      <option value="BANK_TRANSFER">Bank Transfer</option>
-                    </select>
-                    <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" placeholder="Amount" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />
-                    <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Receipt / reference number *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />
-                    {method === 'CARD' && <input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="Card last 4 digits *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />}
-                    {(method === 'UPI_QR' || method === 'BANK_TRANSFER') && <input value={utr} onChange={(e) => setUtr(e.target.value)} placeholder="UTR / transaction ID" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />}
-                    {method === 'BANK_TRANSFER' && <input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="Bank name" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />}
-                    <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Accounts remarks" className="md:col-span-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />
-                    <button onClick={() => void confirmPayment()} className="md:col-span-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4" />Confirm Payment & Release to Warehouse</button>
-                  </div>
-                )}
-
-                {isSelected && isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && (
-                  <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <input value={loadedBy} onChange={(e) => setLoadedBy(e.target.value)} placeholder="Loaded By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />
-                    <input value={verifiedBy} onChange={(e) => setVerifiedBy(e.target.value)} placeholder="Verified By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />
-                    <input value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())} placeholder="Vehicle Number" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />
-                    <textarea value={warehouseRemarks} onChange={(e) => setWarehouseRemarks(e.target.value)} placeholder="Warehouse loading remarks" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white" />
-                    <button onClick={() => void markLoaded()} className="md:col-span-2 px-4 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><Truck className="w-4 h-4" />Mark Loaded & Verified</button>
-                  </div>
-                )}
+                {isSelected && isAccounts && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><select value={method} onChange={(e) => setMethod(e.target.value)} className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"><option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI_QR">UPI</option><option value="BANK_TRANSFER">Bank Transfer</option></select><input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" placeholder="Amount" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Receipt / reference number *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>{method === 'CARD' && <input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0,4))} placeholder="Card last 4 digits *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}{(method === 'UPI_QR' || method === 'BANK_TRANSFER') && <input value={utr} onChange={(e) => setUtr(e.target.value)} placeholder="UTR / transaction ID" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}{method === 'BANK_TRANSFER' && <input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="Bank name" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/>}<textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Accounts remarks" className="md:col-span-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><button onClick={() => void confirmPayment()} className="md:col-span-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4"/>Confirm Payment & Release to Warehouse</button></div>}
+                {isSelected && isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><input value={loadedBy} onChange={(e) => setLoadedBy(e.target.value)} placeholder="Loaded By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><input value={verifiedBy} onChange={(e) => setVerifiedBy(e.target.value)} placeholder="Verified By *" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><input value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())} placeholder="Vehicle Number" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><textarea value={warehouseRemarks} onChange={(e) => setWarehouseRemarks(e.target.value)} placeholder="Warehouse loading remarks" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"/><button onClick={() => void markLoaded()} className="md:col-span-2 px-4 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><Truck className="w-4 h-4"/>Mark Loaded & Verified</button></div>}
               </div>
             );
           })}
