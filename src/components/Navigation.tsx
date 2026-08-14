@@ -14,7 +14,8 @@ import {
   ShieldAlert,
   PanelLeftClose,
   PanelLeftOpen,
-  CreditCard
+  CreditCard,
+  Percent
 } from 'lucide-react';
 
 interface NavigationProps {
@@ -41,7 +42,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   const navItems = [
     { id: 'pos', label: 'POS & Billing', shortLabel: 'POS', icon: ShoppingCart, action: 'CREATE_POS_BILL' as const, badge: null },
     { id: 'inventory', label: 'Inventory', shortLabel: 'Stock', icon: Package, action: 'MANAGE_PRODUCTS' as const, badge: lowStockCount > 0 ? `${lowStockCount}` : null, badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
-    { id: 'accounts', label: 'Accounts Payment Confirmation', shortLabel: 'Accounts', icon: CreditCard, action: 'CONFIRM_PAYMENTS' as const, badge: unpaidInvoiceCount > 0 ? `${unpaidInvoiceCount}` : null, badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
+    { id: 'accounts', label: userRole === 'BRANCH_MANAGER' ? 'Additional Discount Approval' : 'Accounts Payment Confirmation', shortLabel: userRole === 'BRANCH_MANAGER' ? 'Approvals' : 'Accounts', icon: userRole === 'BRANCH_MANAGER' ? Percent : CreditCard, action: userRole === 'BRANCH_MANAGER' ? 'APPROVE_BRANCH_MANAGER_DISCOUNT' as const : 'CONFIRM_PAYMENTS' as const, badge: unpaidInvoiceCount > 0 && userRole !== 'BRANCH_MANAGER' ? `${unpaidInvoiceCount}` : null, badgeColor: userRole === 'BRANCH_MANAGER' ? 'bg-violet-500/20 text-violet-300 border-violet-500/40' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
     { id: userRole === 'WAREHOUSE' ? 'accounts' : 'warehouse', label: userRole === 'WAREHOUSE' ? 'Warehouse Loading & Delivery' : 'Warehouse & Logistics', shortLabel: 'Dispatch', icon: Truck, action: 'MANAGE_WAREHOUSE' as const, badge: pendingDispatchCount > 0 ? `${pendingDispatchCount}` : null, badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
     { id: 'promos', label: 'Promos & Offers', shortLabel: 'Promos', icon: Tag, action: 'MANAGE_PROMOS' as const, badge: activePromoCount > 0 ? `${activePromoCount}` : null, badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
     { id: 'invoices', label: 'Invoices & AR', shortLabel: 'Bills', icon: Receipt, action: 'CREATE_POS_BILL' as const, badge: unpaidInvoiceCount > 0 ? `${unpaidInvoiceCount}` : null, badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
