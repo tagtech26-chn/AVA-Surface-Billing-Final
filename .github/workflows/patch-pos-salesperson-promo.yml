@@ -1,0 +1,37 @@
+name: Patch POS salesperson and promo
+
+on:
+  push:
+    branches:
+      - feature/dotnet-mssql-server
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: POS salesperson and promo selector') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/dotnet-mssql-server
+          fetch-depth: 0
+
+      - name: Apply POS patch
+        run: python tools/patch-pos-salesperson-promo.py
+
+      - name: Verify builds
+        run: |
+          npm install
+          npm run build
+          dotnet build server-dotnet/AVASurface.Server.csproj
+
+      - name: Commit patched POS and remove temporary files
+        run: |
+          rm -f tools/patch-pos-salesperson-promo.py .github/workflows/patch-pos-salesperson-promo.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/PosBillingView.tsx tools/patch-pos-salesperson-promo.py .github/workflows/patch-pos-salesperson-promo.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: POS salesperson and promo selector"
+          git push origin feature/dotnet-mssql-server
