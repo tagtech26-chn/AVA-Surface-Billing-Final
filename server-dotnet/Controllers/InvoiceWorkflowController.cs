@@ -64,40 +64,58 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         if (string.IsNullOrWhiteSpace(request.Method))
             return BadRequest("Payment method is required.");
 
+        var requestedMethod = request.Method.Trim().ToUpperInvariant();
         var allowedMethods = new[] { "CASH", "CARD", "UPI_QR", "BANK_TRANSFER" };
-        if (!allowedMethods.Contains(request.Method, StringComparer.OrdinalIgnoreCase))
+        if (!allowedMethods.Contains(requestedMethod, StringComparer.OrdinalIgnoreCase))
             return BadRequest("Payment method must be CASH, CARD, UPI_QR or BANK_TRANSFER.");
-        if (string.IsNullOrWhiteSpace(request.SpecificReference))
-            return BadRequest("Payment-specific reference/details are required.");
 
         var invoice = await db.Invoices.Include(x => x.Payments).FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
         if (invoice is null) return NotFound();
         if (invoice.WorkflowStatus != "PAYMENT_PENDING")
             return BadRequest($"Invoice is currently in workflow state '{invoice.WorkflowStatus}'.");
 
+        if (!string.Equals(invoice.PaymentMethodRequested, requestedMethod, StringComparison.OrdinalIgnoreCase))
+            return BadRequest($"Payment method mismatch. Cashier requested '{invoice.PaymentMethodRequested}', but Accounts submitted '{requestedMethod}'.");
+
+        if (string.IsNullOrWhiteSpace(request.SpecificReference))
+            return BadRequest("Payment-specific receipt/reference is required for Accounts confirmation.");
+
+        if (requestedMethod == "CARD" && !System.Text.RegularExpressions.Regex.IsMatch(request.CardLast4 ?? string.Empty, "^\\d{4}$"))
+            return BadRequest("Card last 4 digits are required for card payment.");
+
+        if (requestedMethod is "UPI_QR" or "BANK_TRANSFER") && string.IsNullOrWhiteSpace(request.Utr))
+            return BadRequest("UTR / transaction ID is required for this payment method.");
+
         invoice.PaymentConfirmedByUserId = accountsUser.Id;
         invoice.PaymentConfirmedByName = accountsUser.DisplayName;
         invoice.PaymentConfirmedAtUtc = DateTime.UtcNow;
-        invoice.PaymentMethodConfirmed = request.Method.ToUpperInvariant();
+        invoice.PaymentMethodConfirmed = requestedMethod;
         invoice.PaymentSpecificReference = request.SpecificReference.Trim();
         invoice.PaymentBankName = string.IsNullOrWhiteSpace(request.BankName) ? null : request.BankName.Trim();
         invoice.PaymentCardLast4 = string.IsNullOrWhiteSpace(request.CardLast4) ? null : request.CardLast4.Trim();
         invoice.PaymentUtr = string.IsNullOrWhiteSpace(request.Utr) ? null : request.Utr.Trim();
         invoice.PaymentRemarks = string.IsNullOrWhiteSpace(request.Remarks) ? null : request.Remarks.Trim();
         invoice.WorkflowStatus = "PAYMENT_CONFIRMED";
+        invoice.Status = request.Amount >= invoice.GrandTotal ? "PAID" : "PARTIAL";
 
         invoice.Payments.Add(new Payment
         {
-            Id = Guid.NewGuid(), InvoiceId = invoice.Id, Amount = request.Amount,
-            Method = request.Method.ToUpperInvariant(),
+            Id = Guid.NewGuid(),
+            InvoiceId = invoice.Id,
+            Amount = request.Amount,
+            Method = requestedMethod,
             PaymentDateUtc = request.PaymentDateUtc == default ? DateTime.UtcNow : request.PaymentDateUtc,
             Reference = request.SpecificReference.Trim()
         });
 
         db.AuditLogs.Add(new AuditLog
         {
-            UserId = accountsUser.Id, Action = "INVOICE_PAYMENT_CONFIRMED", EntityName = nameof(Invoice), EntityId = invoice.Id,
-            Details = $"Payment confirmed: {request.Method}, amount {request.Amount:0.00}, reference {request.SpecificReference}.", CreatedAtUtc = DateTime.UtcNow
+            UserId = accountsUser.Id,
+            Action = "INVOICE_PAYMENT_CONFIRMED",
+            EntityName = nameof(Invoice),
+            EntityId = invoice.Id,
+            Details = $"Accounts confirmed {requestedMethod} payment: amount {request.Amount:0.00}, reference {request.SpecificReference}.",
+            CreatedAtUtc = DateTime.UtcNow
         });
 
         await db.SaveChangesAsync(cancellationToken);
@@ -124,8 +142,12 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
 
         db.AuditLogs.Add(new AuditLog
         {
-            UserId = warehouseUser.Id, Action = "INVOICE_LOADED", EntityName = nameof(Invoice), EntityId = invoice.Id,
-            Details = $"Loaded by {request.LoadedBy}; verified by {request.VerifiedBy}; vehicle {request.VehicleNumber}.", CreatedAtUtc = DateTime.UtcNow
+            UserId = warehouseUser.Id,
+            Action = "INVOICE_LOADED",
+            EntityName = nameof(Invoice),
+            EntityId = invoice.Id,
+            Details = $"Loaded by {request.LoadedBy}; verified by {request.VerifiedBy}; vehicle {request.VehicleNumber}.",
+            CreatedAtUtc = DateTime.UtcNow
         });
 
         await db.SaveChangesAsync(cancellationToken);
@@ -149,8 +171,12 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
 
         db.AuditLogs.Add(new AuditLog
         {
-            UserId = warehouseUser.Id, Action = "INVOICE_DELIVERED", EntityName = nameof(Invoice), EntityId = invoice.Id,
-            Details = $"Delivered by {invoice.DeliveredByName}. Remarks: {request.Remarks}", CreatedAtUtc = DateTime.UtcNow
+            UserId = warehouseUser.Id,
+            Action = "INVOICE_DELIVERED",
+            EntityName = nameof(Invoice),
+            EntityId = invoice.Id,
+            Details = $"Delivered by {invoice.DeliveredByName}. Remarks: {request.Remarks}",
+            CreatedAtUtc = DateTime.UtcNow
         });
 
         await db.SaveChangesAsync(cancellationToken);
