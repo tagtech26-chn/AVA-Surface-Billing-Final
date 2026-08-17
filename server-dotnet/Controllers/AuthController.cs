@@ -36,7 +36,7 @@ public sealed class AuthController(BillingDbContext db, IConfiguration configura
         {
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new Claim(ClaimTypes.Name, user.UserName),
-            new Claim(ClaimTypes.DisplayName, user.DisplayName),
+            new Claim(ClaimTypes.GivenName, user.DisplayName),
             new Claim(ClaimTypes.Role, user.Role)
         };
 
