@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AVASurface.Server.Migrations
 {
     [DbContext(typeof(BillingDbContext))]
-    [Migration("20260814060826_AddCustomerPincode")]
+    [Migration("20260814063256_AddCustomerPincode")]
     partial class AddCustomerPincode
     {
         /// <inheritdoc />
