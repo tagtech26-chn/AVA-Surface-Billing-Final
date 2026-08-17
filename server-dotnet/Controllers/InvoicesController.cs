@@ -1,8 +1,10 @@
 using AVASurface.Server.Domain;
 using AVASurface.Server.Infrastructure;
 using AVASurface.Server.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using System.Text.RegularExpressions;
 
 namespace AVASurface.Server.Controllers;
@@ -75,6 +77,7 @@ public sealed class InvoicesController(
         return Ok(invoice);
     }
 
+    [Authorize(Roles = "CASHIER,BILLING_USER")]
     [HttpPost]
     public async Task<ActionResult<Invoice>> Create(InvoiceRequest request, CancellationToken cancellationToken)
     {
@@ -297,13 +300,14 @@ public sealed class InvoicesController(
 
             db.Invoices.Add(invoice);
 
+            var creatorUserId = GetAuthenticatedUserId();
             db.AuditLogs.Add(new AuditLog
             {
-                UserId = null,
+                UserId = creatorUserId,
                 Action = "INVOICE_CREATED",
                 EntityName = nameof(Invoice),
                 EntityId = invoiceId,
-                Details = $"Invoice created with payment method '{request.PaymentMethodRequested}' pending Accounts confirmation.",
+                Details = $"Invoice created by {User.Identity?.Name ?? "authenticated billing user"} with payment method '{request.PaymentMethodRequested}' pending Accounts confirmation.",
                 CreatedAtUtc = DateTime.UtcNow
             });
 
@@ -318,6 +322,12 @@ public sealed class InvoicesController(
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
+    }
+
+    private Guid? GetAuthenticatedUserId()
+    {
+        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return Guid.TryParse(value, out var userId) ? userId : null;
     }
 
     private static string? ValidateRequest(InvoiceRequest request)
