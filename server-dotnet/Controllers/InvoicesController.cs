@@ -274,29 +274,92 @@ public sealed class InvoicesController(
                 CreatedAtUtc = DateTime.UtcNow
             };
 
-            foreach (var line in request.Lines)
+            var promoPercent = Math.Min(100m, Math.Max(0m, promotions.Where(x => x.IsActive).Sum(x => x.DiscountPercent)));
+            var lineBases = request.Lines.Select(line =>
             {
                 var product = products[line.ProductId];
-                var gross = line.Quantity * product.SellingPrice;
-                var lineDiscount = gross * line.DiscountPercent / 100m;
+                var gross = Math.Round(line.Quantity * product.SellingPrice, 2, MidpointRounding.AwayFromZero);
+                var lineDiscount = Math.Round(gross * line.DiscountPercent / 100m, 2, MidpointRounding.AwayFromZero);
+                return new
+                {
+                    Line = line,
+                    Product = product,
+                    Gross = gross,
+                    LineDiscount = lineDiscount,
+                    AfterLineDiscount = Math.Max(0m, gross - lineDiscount)
+                };
+            }).ToList();
 
-                invoice.Lines.Add(new InvoiceLine
+            var afterLineDiscountTotal = lineBases.Sum(x => x.AfterLineDiscount);
+            var promoDiscountTotal = calculation.PromoDiscountAmount;
+            var afterPromoTotal = Math.Max(0m, afterLineDiscountTotal - promoDiscountTotal);
+            var lineResults = new List<(InvoiceLine Line, decimal Taxable, decimal Cgst, decimal Sgst, decimal Igst, decimal Total)>();
+
+            foreach (var item in lineBases)
+            {
+                var promoAllocation = afterLineDiscountTotal <= 0m
+                    ? 0m
+                    : Math.Round(promoDiscountTotal * item.AfterLineDiscount / afterLineDiscountTotal, 2, MidpointRounding.AwayFromZero);
+                var taxable = Math.Max(0m, item.AfterLineDiscount - promoAllocation);
+                var tax = Math.Round(taxable * item.Product.GstRate / 100m, 2, MidpointRounding.AwayFromZero);
+
+                decimal cgst;
+                decimal sgst;
+                decimal igst;
+                if (request.InterState)
+                {
+                    cgst = 0m;
+                    sgst = 0m;
+                    igst = tax;
+                }
+                else
+                {
+                    cgst = Math.Round(tax / 2m, 2, MidpointRounding.AwayFromZero);
+                    sgst = Math.Round(tax - cgst, 2, MidpointRounding.AwayFromZero);
+                    igst = 0m;
+                }
+
+                var lineTotal = Math.Round(taxable + cgst + sgst + igst, 2, MidpointRounding.AwayFromZero);
+                var invoiceLine = new InvoiceLine
                 {
                     Id = Guid.NewGuid(),
                     InvoiceId = invoiceId,
-                    ProductId = product.Id,
-                    Product = product,
-                    Quantity = line.Quantity,
-                    UnitPrice = product.SellingPrice,
-                    DiscountPercent = line.DiscountPercent,
-                    DiscountAmount = Math.Round(lineDiscount, 2, MidpointRounding.AwayFromZero),
-                    TaxableAmount = 0m,
-                    CgstAmount = 0m,
-                    SgstAmount = 0m,
-                    IgstAmount = 0m,
-                    LineTotal = Math.Round(gross - lineDiscount, 2, MidpointRounding.AwayFromZero)
-                });
+                    ProductId = item.Product.Id,
+                    Product = item.Product,
+                    Quantity = item.Line.Quantity,
+                    UnitPrice = item.Product.SellingPrice,
+                    DiscountPercent = item.Line.DiscountPercent,
+                    DiscountAmount = item.LineDiscount,
+                    TaxableAmount = taxable,
+                    CgstAmount = cgst,
+                    SgstAmount = sgst,
+                    IgstAmount = igst,
+                    LineTotal = lineTotal
+                };
+
+                lineResults.Add((invoiceLine, taxable, cgst, sgst, igst, lineTotal));
             }
+
+            // Reconcile two-decimal line rounding to the authoritative invoice totals.
+            if (lineResults.Count > 0)
+            {
+                var last = lineResults[^1];
+                var taxableDelta = calculation.TaxableAmount - lineResults.Sum(x => x.Taxable);
+                var cgstDelta = calculation.CgstAmount - lineResults.Sum(x => x.Cgst);
+                var sgstDelta = calculation.SgstAmount - lineResults.Sum(x => x.Sgst);
+                var igstDelta = calculation.IgstAmount - lineResults.Sum(x => x.Igst);
+                var totalDelta = (calculation.TaxableAmount + calculation.CgstAmount + calculation.SgstAmount + calculation.IgstAmount)
+                    - lineResults.Sum(x => x.Total);
+
+                last.Line.TaxableAmount += taxableDelta;
+                last.Line.CgstAmount += cgstDelta;
+                last.Line.SgstAmount += sgstDelta;
+                last.Line.IgstAmount += igstDelta;
+                last.Line.LineTotal += totalDelta;
+            }
+
+            foreach (var result in lineResults)
+                invoice.Lines.Add(result.Line);
 
             db.Invoices.Add(invoice);
 
