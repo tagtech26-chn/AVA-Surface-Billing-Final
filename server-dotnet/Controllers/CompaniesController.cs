@@ -15,6 +15,7 @@ public sealed class CompaniesController(BillingDbContext db) : ControllerBase
     public async Task<ActionResult<IEnumerable<Company>>> Get(CancellationToken cancellationToken)
         => Ok(await db.Companies.AsNoTracking().OrderBy(x => x.LegalName).ToListAsync(cancellationToken));
 
+    [Authorize(Roles = "ADMIN")]
     [HttpPost]
     public async Task<ActionResult<Company>> Create(Company company, CancellationToken cancellationToken)
     {
