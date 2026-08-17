@@ -3,165 +3,65 @@ from pathlib import Path
 p = Path('src/components/PosBillingView.tsx')
 s = p.read_text(encoding='utf-8')
 
+
 def replace_once(old: str, new: str, label: str):
     global s
     if old not in s:
         raise SystemExit(f'Patch target not found: {label}')
     s = s.replace(old, new, 1)
 
+
+# The POS component has evolved since the original one-time patch was authored.
+# Patch the current GST state/handler instead of relying on the old handler body.
 replace_once(
-"  const [gstData, setGstData] = useState<GstLookupResult | null>(null);",
-"  const [gstData, setGstData] = useState<GstLookupResult | null>(null);\n  const [gstManualMode, setGstManualMode] = useState(false);",
-"GST manual state")
+    "  const [gstData, setGstData] = useState<GstLookupResult | null>(null);",
+    "  const [gstData, setGstData] = useState<GstLookupResult | null>(null);\n  const [gstManualMode, setGstManualMode] = useState(false);",
+    "GST manual state",
+)
 
 replace_once(
-"""      const res = await lookupGstDetails(targetGst);
-      setGstData(res);
-      if (res.status === 'ACTIVE' && res.isValid) {
-        setLedgerCustName(res.tradeName || res.legalName);
-        setNewCustName(res.tradeName || res.legalName);
-        setNewCustTax(res.gstin);
-        setNewCustBillingAddress(res.address || '');
-        setNewCustState(res.stateName || '');
-        setNewCustStateCode(res.stateCode || '');
-      }""",
-"""      const res = await lookupGstDetails(targetGst);
-      setGstData(res);
-      setGstManualMode(false);
-      if (res.status === 'ACTIVE' && res.isValid) {
-        setLedgerCustName(res.tradeName || res.legalName);
-        setNewCustName(res.tradeName || res.legalName);
-        setNewCustTax(res.gstin);
-        setNewCustBillingAddress(res.address || '');
-        setNewCustState(res.stateName || '');
-        setNewCustStateCode(res.stateCode || '');
-      }""",
-"GST verification handler")
+    """      const res = await lookupGstDetails(targetGst);\n      setGstData(res);\n      if (res.isValid && res.status === 'ACTIVE') {""",
+    """      const res = await lookupGstDetails(targetGst);\n      setGstData(res);\n      setGstManualMode(false);\n      if (res.isValid && res.status === 'ACTIVE') {""",
+    "GST verification handler",
+)
 
+# The current UI already exposes the manual B2B button. Make that button explicitly
+# enter manual mode so checkout/customer validation can distinguish it from verified GST.
 replace_once(
-"""    if (customerType === 'LEDGER') {
-      const verifiedGstin = gstData?.gstin?.trim().toUpperCase();
-      if (!gstInput.trim() || verifiedGstin !== gstInput.trim().toUpperCase() || gstData?.status !== 'ACTIVE' || !gstData?.isValid) {
-        setToastNotification('B2B/Ledger billing requires successful online GSTIN verification with ACTIVE status.');
-        setTimeout(() => setToastNotification(null), 5000);
-        return;
-      }
-    }""",
-"""    if (customerType === 'LEDGER') {
-      const verifiedGstin = gstData?.gstin?.trim().toUpperCase();
-      const verifiedActive = !!gstInput.trim() && verifiedGstin === gstInput.trim().toUpperCase() && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
-      const manualB2B = gstManualMode && !!gstInput.trim();
-      if (!verifiedActive && !manualB2B) {
-        setToastNotification('Verify the GSTIN first. If verification fails, choose Manual B2B Entry and enter the customer details.');
-        setTimeout(() => setToastNotification(null), 5000);
-        return;
-      }
-    }""",
-"checkout B2B validation")
+    """                        onClick={() => {\n                          setNewCustType('LEDGER');""",
+    """                        onClick={() => {\n                          setGstManualMode(true);\n                          setNewCustType('LEDGER');""",
+    "manual B2B button state",
+)
 
+# Require ACTIVE online verification for normal B2B checkout, while allowing the
+# explicit manual fallback. This is inserted into the current checkout flow.
 replace_once(
-"""    if (!finalCustomerObj && customerType === 'LEDGER' && gstInput.trim() && gstData?.status === 'ACTIVE') {
-      finalCustomerObj = onAddNewCustomer({
-        name: gstData.tradeName || gstData.legalName,
-        phone: ledgerCustPhone || '',
-        customerType: 'LEDGER',
-        gstNumber: gstData.gstin,
-        gstLegalName: gstData.legalName,
-        gstTradeName: gstData.tradeName,
-        gstStatus: 'ACTIVE',
-        gstState: gstData.stateName,
-        taxNumber: gstData.gstin,
-        address: gstData.address,
-        billingAddress: gstData.address,
-        city: '',
-        state: gstData.stateName,
-        stateCode: gstData.stateCode,
-        shippingAddress: gstData.address
-      });
-    }""",
-"""    if (!finalCustomerObj && customerType === 'LEDGER' && gstInput.trim()) {
-      const verifiedActive = gstData?.status === 'ACTIVE' && gstData?.isValid && gstData?.gstin?.toUpperCase() === gstInput.trim().toUpperCase();
-      if (verifiedActive) {
-        finalCustomerObj = onAddNewCustomer({
-          name: gstData.tradeName || gstData.legalName,
-          phone: ledgerCustPhone || '',
-          customerType: 'LEDGER',
-          gstNumber: gstData.gstin,
-          gstLegalName: gstData.legalName,
-          gstTradeName: gstData.tradeName,
-          gstStatus: 'ACTIVE',
-          gstState: gstData.stateName,
-          taxNumber: gstData.gstin,
-          address: gstData.address,
-          billingAddress: gstData.address,
-          city: '',
-          state: gstData.stateName,
-          stateCode: gstData.stateCode,
-          shippingAddress: gstData.address
-        });
-      } else if (gstManualMode) {
-        finalCustomerObj = onAddNewCustomer({
-          name: newCustName.trim(),
-          phone: newCustPhone.trim(),
-          email: newCustEmail.trim() || undefined,
-          customerType: 'LEDGER',
-          gstNumber: gstInput.trim().toUpperCase(),
-          gstLegalName: newCustName.trim(),
-          gstTradeName: newCustName.trim(),
-          gstStatus: 'UNVERIFIED',
-          gstState: newCustState.trim(),
-          taxNumber: gstInput.trim().toUpperCase(),
-          address: newCustBillingAddress.trim(),
-          billingAddress: newCustBillingAddress.trim(),
-          city: newCustCity.trim(),
-          state: newCustState.trim(),
-          stateCode: newCustStateCode.trim(),
-          shippingAddress: (shippingSameAsBilling ? newCustBillingAddress : newCustShippingAddress).trim()
-        });
-      }
-    }""",
-"manual B2B customer fallback")
+    """    if (!selectedSalesperson) {\n      setToastNotification('Select a salesperson before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    let finalInvoiceNumber = '';""",
+    """    if (!selectedSalesperson) {\n      setToastNotification('Select a salesperson before saving the bill.');\n      setTimeout(() => setToastNotification(null), 4000);\n      return;\n    }\n\n    if (customerType === 'LEDGER') {\n      const inputGstin = gstInput.trim().toUpperCase();\n      const customerGstin = selectedCustomer?.gstNumber?.trim().toUpperCase() || selectedCustomer?.taxNumber?.trim().toUpperCase();\n      const verifiedActive = !!inputGstin && customerGstin === inputGstin && gstData?.gstin?.trim().toUpperCase() === inputGstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;\n      const manualB2B = gstManualMode && !!inputGstin;\n      if (!verifiedActive && !manualB2B && selectedCustomer?.gstStatus !== 'ACTIVE') {\n        setToastNotification('Verify the GSTIN first. If online verification is unavailable, choose Enter B2B Customer Details Manually.');\n        setTimeout(() => setToastNotification(null), 5000);\n        return;\n      }\n    }\n\n    let finalInvoiceNumber = '';""",
+    "checkout B2B validation",
+)
 
+# Mark manually entered B2B customers as UNVERIFIED. Verified customers keep ACTIVE status.
 replace_once(
-"""    if (newCustType === 'LEDGER' && (!gstin || gstData?.gstin !== gstin || gstData?.status !== 'ACTIVE' || !gstData?.isValid)) {
-      setToastNotification('Verify the GSTIN online and confirm ACTIVE status before saving a B2B/Ledger customer.');
-      setTimeout(() => setToastNotification(null), 5000);
-      return;
-    }""",
-"""    if (newCustType === 'LEDGER') {
-      const verifiedActive = !!gstin && gstData?.gstin?.toUpperCase() === gstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
-      if (!verifiedActive && !gstManualMode) {
-        setToastNotification('GSTIN verification failed or is unavailable. Choose Manual B2B Entry to enter the customer details manually.');
-        setTimeout(() => setToastNotification(null), 5000);
-        return;
-      }
-    }""",
-"customer modal B2B fallback validation")
+    """      gstStatus: newCustType === 'LEDGER' ? (gstData?.status || 'UNVERIFIED') : undefined,""",
+    """      gstStatus: newCustType === 'LEDGER' ? (gstManualMode ? 'UNVERIFIED' : (gstData?.status || 'UNVERIFIED')) : undefined,""",
+    "manual B2B customer status",
+)
 
-# Add manual-entry button after the GST status panel.
+# The current modal already allows complete manual business details, so only enforce
+# online verification when the user did not explicitly choose the manual fallback.
 replace_once(
-"""                  {newCustType === 'LEDGER' && gstData && (
-                    <div className={`mt-2 p-2 rounded-xl border text-[10px] ${gstData.status === 'ACTIVE' ? 'bg-emerald-950 border-emerald-500/50 text-emerald-200' : 'bg-rose-950 border-rose-500/50 text-rose-200'}`}>
-                      <strong>{gstData.status}</strong> — {gstData.message}
-                    </div>
-                  )}""",
-"""                  {newCustType === 'LEDGER' && gstData && (
-                    <div className={`mt-2 p-2 rounded-xl border text-[10px] ${gstData.status === 'ACTIVE' ? 'bg-emerald-950 border-emerald-500/50 text-emerald-200' : 'bg-rose-950 border-rose-500/50 text-rose-200'}`}>
-                      <strong>{gstData.status}</strong> — {gstData.message}
-                      {gstData.status !== 'ACTIVE' && (
-                        <button type=\"button\" onClick={() => setGstManualMode(true)} className=\"ml-2 px-2 py-1 rounded-lg bg-amber-600 text-white font-bold\">Manual B2B Entry</button>
-                      )}
-                    </div>
-                  )}
-                  {newCustType === 'LEDGER' && gstManualMode && (
-                    <div className=\"mt-2 p-2 rounded-xl bg-amber-950/40 border border-amber-500/40 text-[10px] text-amber-200\">
-                      GST verification was unavailable. You may enter B2B customer details manually. The customer will be stored as <strong>UNVERIFIED</strong> and should be re-verified later.
-                    </div>
-                  )}""",
-"manual B2B UI")
+    """    if (newCustType === 'LEDGER' && !gstin) {\n      setToastNotification('GSTIN is mandatory for a Ledger (B2B) customer.');\n      setTimeout(() => setToastNotification(null), 4500);\n      return;\n    }""",
+    """    if (newCustType === 'LEDGER' && !gstin) {\n      setToastNotification('GSTIN is mandatory for a Ledger (B2B) customer.');\n      setTimeout(() => setToastNotification(null), 4500);\n      return;\n    }\n\n    if (newCustType === 'LEDGER' && !gstManualMode) {\n      const verifiedActive = gstData?.gstin?.trim().toUpperCase() === gstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;\n      if (!verifiedActive) {\n        setToastNotification('Verify the GSTIN online first, or use Enter B2B Customer Details Manually.');\n        setTimeout(() => setToastNotification(null), 5000);\n        return;\n      }\n    }""",
+    "customer modal B2B validation",
+)
 
-# Do not make business fields read-only in manual mode.
-s = s.replace("readOnly={newCustType === 'LEDGER' && gstData?.status === 'ACTIVE'}", "readOnly={newCustType === 'LEDGER' && gstData?.status === 'ACTIVE' && !gstManualMode}")
+# Clear manual mode whenever the POS session is reset after checkout.
+replace_once(
+    """    setGstInput('');\n    setGstData(null);\n  };""",
+    """    setGstInput('');\n    setGstData(null);\n    setGstManualMode(false);\n  };""",
+    "checkout GST reset",
+)
 
 p.write_text(s, encoding='utf-8')
-print('Manual B2B fallback patch applied.')
+print('Manual B2B fallback patch applied to current PosBillingView.tsx.')
