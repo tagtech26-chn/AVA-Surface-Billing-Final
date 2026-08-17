@@ -101,6 +101,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [gstInput, setGstInput] = useState('');
   const [isVerifyingGst, setIsVerifyingGst] = useState(false);
   const [gstData, setGstData] = useState<GstLookupResult | null>(null);
+  const [gstManualMode, setGstManualMode] = useState(false);
   const [ledgerCustName, setLedgerCustName] = useState('');
   const [ledgerCustPhone, setLedgerCustPhone] = useState('');
 
@@ -246,6 +247,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     try {
       const res = await lookupGstDetails(targetGst);
       setGstData(res);
+      setGstManualMode(false);
       if (res.isValid && res.status === 'ACTIVE') {
         if (!ledgerCustName) {
           setLedgerCustName(res.tradeName || res.legalName);
@@ -715,13 +717,22 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
       return;
     }
 
+    if (newCustType === 'LEDGER' && !gstManualMode) {
+      const verifiedActive = gstData?.gstin?.trim().toUpperCase() === gstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
+      if (!verifiedActive) {
+        setToastNotification('Verify the GSTIN online first, or use Enter B2B Customer Details Manually.');
+        setTimeout(() => setToastNotification(null), 5000);
+        return;
+      }
+    }
+
     const created = onAddNewCustomer({
       name,
       phone,
       email: newCustEmail.trim() || undefined,
       customerType: newCustType,
       gstNumber: gstin || undefined,
-      gstStatus: newCustType === 'LEDGER' ? (gstData?.status || 'UNVERIFIED') : undefined,
+      gstStatus: newCustType === 'LEDGER' ? (gstManualMode ? 'UNVERIFIED' : (gstData?.status || 'UNVERIFIED')) : undefined,
       gstLegalName: gstData?.legalName || undefined,
       gstTradeName: gstData?.tradeName || undefined,
       taxNumber: gstin || undefined,
@@ -780,6 +791,18 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
       setToastNotification('Select a salesperson before saving the bill.');
       setTimeout(() => setToastNotification(null), 4000);
       return;
+    }
+
+    if (customerType === 'LEDGER') {
+      const inputGstin = gstInput.trim().toUpperCase();
+      const customerGstin = selectedCustomer?.gstNumber?.trim().toUpperCase() || selectedCustomer?.taxNumber?.trim().toUpperCase();
+      const verifiedActive = !!inputGstin && customerGstin === inputGstin && gstData?.gstin?.trim().toUpperCase() === inputGstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
+      const manualB2B = gstManualMode && !!inputGstin;
+      if (!verifiedActive && !manualB2B && selectedCustomer?.gstStatus !== 'ACTIVE') {
+        setToastNotification('Verify the GSTIN first. If online verification is unavailable, choose Enter B2B Customer Details Manually.');
+        setTimeout(() => setToastNotification(null), 5000);
+        return;
+      }
     }
 
     let finalInvoiceNumber = '';
@@ -903,6 +926,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     setPaymentNotes('');
     setGstInput('');
     setGstData(null);
+    setGstManualMode(false);
   };
 
   return (
@@ -1363,6 +1387,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                       <button
                         type="button"
                         onClick={() => {
+                          setGstManualMode(true);
                           setNewCustType('LEDGER');
                           setNewCustTax(gstInput.trim().toUpperCase());
                           setNewCustName('');
