@@ -72,6 +72,31 @@ app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Local Billing creation is restricted at the API boundary. UI visibility is not a security boundary.
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsPost(context.Request.Method) &&
+        context.Request.Path.Equals("/api/invoices", StringComparison.OrdinalIgnoreCase))
+    {
+        if (context.User.Identity?.IsAuthenticated != true)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        var role = context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+        if (!string.Equals(role, "CASHIER", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(role, "BILLING_USER", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { message = "Only Cashier or Billing users can create invoices." });
+            return;
+        }
+    }
+
+    await next();
+});
+
 app.MapGet("/api/health", async (BillingDbContext db) =>
 {
     var canConnect = await db.Database.CanConnectAsync();
