@@ -19,9 +19,6 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // Domain entities contain bidirectional navigation properties (for example
-        // Invoice -> Company -> Invoices and Company -> Salespersons -> Company).
-        // API responses must not recursively serialize the EF graph.
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
         options.JsonSerializerOptions.MaxDepth = 32;
     });
@@ -41,7 +38,7 @@ builder.Services.AddHttpClient("GstVerification", client =>
 
 var jwtSecret = builder.Configuration["Authentication:JwtSecret"];
 if (string.IsNullOrWhiteSpace(jwtSecret) || Encoding.UTF8.GetByteCount(jwtSecret) < 32)
-    throw new InvalidOperationException("Authentication:JwtSecret must contain at least 32 bytes.");
+    throw new InvalidOperationException("Authentication:JwtSecret must contain at least 32 bytes. Configure it via environment variables or a secret store.");
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -62,10 +59,19 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
+
+if (allowedOrigins.Length == 0)
+    throw new InvalidOperationException("Cors:AllowedOrigins must contain at least one trusted frontend origin.");
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
-        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
+        policy.WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod());
 });
 
 var app = builder.Build();
@@ -80,7 +86,6 @@ app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Local Billing creation is restricted at the API boundary. UI visibility is not a security boundary.
 app.Use(async (context, next) =>
 {
     if (HttpMethods.IsPost(context.Request.Method) &&
