@@ -38,6 +38,7 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.Property(x => x.City).HasMaxLength(100);
             e.Property(x => x.State).HasMaxLength(100);
             e.Property(x => x.StateCode).HasMaxLength(10);
+            e.Property(x => x.Pincode).HasMaxLength(20);
             e.Property(x => x.CustomerType).HasMaxLength(20).IsRequired();
             e.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
             e.HasOne(x => x.Company).WithMany(x => x.Customers).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
@@ -46,10 +47,9 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
         modelBuilder.Entity<Salesperson>(e =>
         {
             e.HasKey(x => x.Id);
-            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Code).HasMaxLength(30).IsRequired();
             e.Property(x => x.Name).HasMaxLength(150).IsRequired();
-            e.Property(x => x.Mobile).HasMaxLength(20).IsRequired();
-            e.Property(x => x.Email).HasMaxLength(200);
+            e.Property(x => x.Mobile).HasMaxLength(15).IsRequired();
             e.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
             e.HasOne(x => x.Company).WithMany(x => x.Salespersons).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -104,9 +104,28 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.InvoiceNumber).HasMaxLength(50).IsRequired();
             e.Property(x => x.SalespersonName).HasMaxLength(150).IsRequired();
-            e.Property(x => x.SalespersonMobile).HasMaxLength(20).IsRequired();
+            e.Property(x => x.SalespersonMobile).HasMaxLength(15).IsRequired();
             e.Property(x => x.SubTotal).HasPrecision(18, 2);
             e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.PromoDiscountPercent).HasPrecision(5, 2);
+            e.Property(x => x.PromoDiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.BranchManagerDiscountPercent).HasPrecision(5, 2);
+            e.Property(x => x.BranchManagerDiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.BranchManagerRemarks).HasMaxLength(500);
+            e.Property(x => x.WorkflowStatus).HasMaxLength(40).IsRequired();
+            e.Property(x => x.PaymentConfirmedByName).HasMaxLength(150);
+            e.Property(x => x.PaymentMethodConfirmed).HasMaxLength(30);
+            e.Property(x => x.PaymentSpecificReference).HasMaxLength(200);
+            e.Property(x => x.PaymentBankName).HasMaxLength(150);
+            e.Property(x => x.PaymentCardLast4).HasMaxLength(4);
+            e.Property(x => x.PaymentUtr).HasMaxLength(100);
+            e.Property(x => x.PaymentRemarks).HasMaxLength(500);
+            e.Property(x => x.WarehouseLoadedBy).HasMaxLength(150);
+            e.Property(x => x.WarehouseVerifiedBy).HasMaxLength(150);
+            e.Property(x => x.WarehouseVehicleNumber).HasMaxLength(30);
+            e.Property(x => x.WarehouseRemarks).HasMaxLength(500);
+            e.Property(x => x.DeliveredByName).HasMaxLength(150);
+            e.Property(x => x.DeliveryRemarks).HasMaxLength(500);
             e.Property(x => x.TaxableAmount).HasPrecision(18, 2);
             e.Property(x => x.CgstAmount).HasPrecision(18, 2);
             e.Property(x => x.SgstAmount).HasPrecision(18, 2);
@@ -114,8 +133,10 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.Property(x => x.RoundOffAmount).HasPrecision(18, 2);
             e.Property(x => x.GrandTotal).HasPrecision(18, 2);
             e.HasIndex(x => new { x.CompanyId, x.InvoiceNumber }).IsUnique();
+            e.HasIndex(x => new { x.CompanyId, x.WorkflowStatus, x.InvoiceDate });
             e.HasOne(x => x.Company).WithMany(x => x.Invoices).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Salesperson).WithMany(x => x.Invoices).HasForeignKey(x => x.SalespersonId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<InvoiceLine>(e =>
@@ -123,6 +144,7 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.Quantity).HasPrecision(18, 3);
             e.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            e.Property(x => x.DiscountPercent).HasPrecision(5, 2);
             e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
             e.Property(x => x.TaxableAmount).HasPrecision(18, 2);
             e.Property(x => x.CgstAmount).HasPrecision(18, 2);

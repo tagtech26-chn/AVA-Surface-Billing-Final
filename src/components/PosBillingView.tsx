@@ -88,8 +88,11 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   // Cart State
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [salespersons, setSalespersons] = useState<Array<{ id: string; code: string; name: string; mobile: string; isActive: boolean }>>([]);
+  const [selectedSalespersonId, setSelectedSalespersonId] = useState('');
   const [promoInput, setPromoInput] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<PromoRule | null>(null);
+  const [promoDismissed, setPromoDismissed] = useState(false);
   const [promoError, setPromoError] = useState('');
   const [manualDiscount, setManualDiscount] = useState<number>(0);
 
@@ -98,6 +101,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [gstInput, setGstInput] = useState('');
   const [isVerifyingGst, setIsVerifyingGst] = useState(false);
   const [gstData, setGstData] = useState<GstLookupResult | null>(null);
+  const [gstManualMode, setGstManualMode] = useState(false);
   const [ledgerCustName, setLedgerCustName] = useState('');
   const [ledgerCustPhone, setLedgerCustPhone] = useState('');
 
@@ -122,6 +126,35 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustEmail, setNewCustEmail] = useState('');
   const [newCustTax, setNewCustTax] = useState('');
+  const [newCustBillingAddress, setNewCustBillingAddress] = useState('');
+  const [newCustShippingAddress, setNewCustShippingAddress] = useState('');
+  const [newCustCity, setNewCustCity] = useState('');
+  const [newCustState, setNewCustState] = useState('');
+  const [newCustStateCode, setNewCustStateCode] = useState('');
+  const [newCustPincode, setNewCustPincode] = useState('');
+  const [shippingSameAsBilling, setShippingSameAsBilling] = useState(true);
+
+  const selectedSalesperson = useMemo(
+    () => salespersons.find((person) => person.id === selectedSalespersonId) || null,
+    [salespersons, selectedSalespersonId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/salespersons')
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Salesperson API HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => {
+        if (!cancelled) setSalespersons(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        console.error('Unable to load salesperson master:', error);
+        if (!cancelled) setSalespersons([]);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // Draft Bill Handler - Save current session on hold
   const handleSaveAsDraft = () => {
@@ -214,6 +247,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     try {
       const res = await lookupGstDetails(targetGst);
       setGstData(res);
+      setGstManualMode(false);
       if (res.isValid && res.status === 'ACTIVE') {
         if (!ledgerCustName) {
           setLedgerCustName(res.tradeName || res.legalName);
@@ -264,12 +298,29 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
 
     const safeBoxes = Math.max(1, boxes);
     const weightKg = safeBoxes * weightPerBox;
-    const totalPrice = safeBoxes * selectedQuickProd.sellingPrice;
+
+    let unitPrice = selectedQuickProd.sellingPrice;
+    let totalPrice = quickQty * unitPrice;
+    if (quickUnit === 'pcs') {
+      unitPrice = selectedQuickProd.sellingPrice / pcsPerBox;
+      totalPrice = quickQty * unitPrice;
+    } else if (quickUnit === 'sqft') {
+      unitPrice = selectedQuickProd.pricePerSqFt || (selectedQuickProd.sellingPrice / sqftPerBox);
+      totalPrice = quickQty * unitPrice;
+    } else if (quickUnit === 'sqmt') {
+      unitPrice = (selectedQuickProd.pricePerSqFt || (selectedQuickProd.sellingPrice / sqftPerBox)) * 10.7639;
+      totalPrice = quickQty * unitPrice;
+    } else if (quickUnit === 'set') {
+      totalPrice = quickQty * selectedQuickProd.sellingPrice;
+    } else {
+      totalPrice = safeBoxes * selectedQuickProd.sellingPrice;
+    }
 
     return {
       boxes: safeBoxes,
       weightKg: Math.round(weightKg * 10) / 10,
-      totalPrice
+      totalPrice: Math.round(totalPrice * 100) / 100,
+      unitPrice: Math.round(unitPrice * 100) / 100
     };
   }, [selectedQuickProd, quickQty, quickUnit]);
 
@@ -309,7 +360,8 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
             selectedUnit: quickUnit,
             itemWeightKg: Math.round(weightKg * 10) / 10,
             discountAmount: 0,
-            finalUnitPrice: selectedQuickProd.sellingPrice,
+            discountPercent: 0,
+            finalUnitPrice: quickCalculatedDetails.unitPrice,
             totalPrice
           }
         ];
@@ -389,7 +441,10 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   }, [cartItems]);
 
   const itemDiscountsTotal = useMemo(() => {
-    return cartItems.reduce((acc, item) => acc + item.discountAmount * item.quantity, 0);
+    return cartItems.reduce((acc, item) => {
+      const billedQuantity = item.inputQuantity ?? item.quantity;
+      return acc + item.discountAmount * billedQuantity;
+    }, 0);
   }, [cartItems]);
 
   // Total Shipment Weight Calculation (kg)
@@ -401,12 +456,14 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
   }, [cartItems]);
 
   // Check if Auto-apply promo rule fits
+  const eligiblePromos = useMemo(() => {
+    return promos.filter((p) => p.isActive && subtotal >= p.minOrderValue);
+  }, [promos, subtotal]);
+
   const autoPromo = useMemo(() => {
-    if (appliedPromo) return null;
-    return promos.find(
-      (p) => p.isActive && p.autoApply && subtotal >= p.minOrderValue
-    );
-  }, [promos, subtotal, appliedPromo]);
+    if (promoDismissed || appliedPromo) return null;
+    return eligiblePromos.find((p) => p.autoApply) || null;
+  }, [eligiblePromos, appliedPromo, promoDismissed]);
 
   const activePromoRule = appliedPromo || autoPromo;
 
@@ -569,6 +626,24 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [products]);
 
+  const handleUpdateLineDiscount = (productId: string, discountPercent: number) => {
+    const safePercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    setCartItems((prev) => prev.map((item) => {
+      if (item.product.id !== productId) return item;
+      const billedQuantity = item.inputQuantity ?? item.quantity;
+      const baseTotal = item.totalPrice + (item.discountAmount * billedQuantity);
+      const discountAmount = (baseTotal * safePercent) / 100 / Math.max(1, billedQuantity);
+      const baseUnitPrice = baseTotal / Math.max(1, billedQuantity);
+      return {
+        ...item,
+        discountPercent: safePercent,
+        discountAmount: Math.round(discountAmount * 100) / 100,
+        finalUnitPrice: Math.round((baseUnitPrice - discountAmount) * 100) / 100,
+        totalPrice: Math.round((baseTotal - (baseTotal * safePercent / 100)) * 100) / 100
+      };
+    }));
+  };
+
   const handleUpdateQuantity = (productId: string, delta: number) => {
     setCartItems((prev) => {
       return prev
@@ -615,21 +690,61 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     }
 
     setAppliedPromo(promo);
+    setPromoDismissed(false);
     setPromoInput('');
   };
 
   const handleCreateCustomerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCustName.trim() || !newCustPhone.trim()) return;
+    const name = newCustName.trim();
+    const phone = newCustPhone.trim();
+    const billingAddress = newCustBillingAddress.trim();
+    const shippingAddress = (shippingSameAsBilling ? newCustBillingAddress : newCustShippingAddress).trim();
+    const city = newCustCity.trim();
+    const state = newCustState.trim();
+    const stateCode = newCustStateCode.trim();
+    const gstin = newCustTax.trim().toUpperCase();
+
+    if (!name || !phone || !billingAddress || !city || !state) {
+      setToastNotification('Customer name, mobile, billing address, city and state are required.');
+      setTimeout(() => setToastNotification(null), 4500);
+      return;
+    }
+
+    if (newCustType === 'LEDGER' && !gstin) {
+      setToastNotification('GSTIN is mandatory for a Ledger (B2B) customer.');
+      setTimeout(() => setToastNotification(null), 4500);
+      return;
+    }
+
+    if (newCustType === 'LEDGER' && !gstManualMode) {
+      const verifiedActive = gstData?.gstin?.trim().toUpperCase() === gstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
+      if (!verifiedActive) {
+        setToastNotification('Verify the GSTIN online first, or use Enter B2B Customer Details Manually.');
+        setTimeout(() => setToastNotification(null), 5000);
+        return;
+      }
+    }
 
     const created = onAddNewCustomer({
-      name: newCustName,
-      phone: newCustPhone,
-      email: newCustEmail,
+      name,
+      phone,
+      email: newCustEmail.trim() || undefined,
       customerType: newCustType,
-      gstNumber: newCustType === 'LEDGER' ? newCustTax : undefined,
-      gstStatus: newCustType === 'LEDGER' ? 'ACTIVE' : undefined,
-      taxNumber: newCustTax
+      gstNumber: gstin || undefined,
+      gstStatus: newCustType === 'LEDGER' ? (gstManualMode ? 'UNVERIFIED' : (gstData?.status || 'UNVERIFIED')) : undefined,
+      gstLegalName: gstData?.legalName || undefined,
+      gstTradeName: gstData?.tradeName || undefined,
+      taxNumber: gstin || undefined,
+      address: billingAddress,
+      billingAddress,
+      shippingAddress: shippingAddress || billingAddress,
+      city,
+      state,
+      stateCode: newCustType === 'LEDGER' ? stateCode : undefined,
+      pincode: newCustPincode.trim() || undefined,
+      gstState: state,
+      gstAddress: billingAddress
     });
 
     setSelectedCustomer(created);
@@ -638,10 +753,71 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     setNewCustPhone('');
     setNewCustEmail('');
     setNewCustTax('');
+    setNewCustBillingAddress('');
+    setNewCustShippingAddress('');
+    setNewCustCity('');
+    setNewCustState('');
+    setNewCustStateCode('');
+    setNewCustPincode('');
+    setShippingSameAsBilling(true);
   };
 
-  const handleCheckoutSubmit = () => {
-    if (cartItems.length === 0) return;
+  const handleCheckoutSubmit = async () => {
+    if (cartItems.length === 0) {
+      setToastNotification('Add at least one item before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!selectedCustomer || !selectedCustomer.name.trim()) {
+      setToastNotification('Customer name is required before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!selectedCustomer.phone?.trim()) {
+      setToastNotification('Customer mobile number is required before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!selectedCustomer.address?.trim() && !selectedCustomer.gstAddress?.trim()) {
+      setToastNotification('Customer address is required before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (!selectedSalesperson) {
+      setToastNotification('Select a salesperson before saving the bill.');
+      setTimeout(() => setToastNotification(null), 4000);
+      return;
+    }
+
+    if (customerType === 'LEDGER') {
+      const inputGstin = gstInput.trim().toUpperCase();
+      const customerGstin = selectedCustomer?.gstNumber?.trim().toUpperCase() || selectedCustomer?.taxNumber?.trim().toUpperCase();
+      const verifiedActive = !!inputGstin && customerGstin === inputGstin && gstData?.gstin?.trim().toUpperCase() === inputGstin && gstData?.status === 'ACTIVE' && !!gstData?.isValid;
+      const manualB2B = gstManualMode && !!inputGstin;
+      if (!verifiedActive && !manualB2B && selectedCustomer?.gstStatus !== 'ACTIVE') {
+        setToastNotification('Verify the GSTIN first. If online verification is unavailable, choose Enter B2B Customer Details Manually.');
+        setTimeout(() => setToastNotification(null), 5000);
+        return;
+      }
+    }
+
+    let finalInvoiceNumber = '';
+    try {
+      const response = await fetch('/api/invoice-number', { method: 'POST' });
+      if (!response.ok) throw new Error(`Invoice numbering API HTTP ${response.status}`);
+      const payload = await response.json();
+      finalInvoiceNumber = String(payload?.invoiceNumber || '').trim();
+      if (!finalInvoiceNumber) throw new Error('Invoice numbering API returned an empty number.');
+    } catch (error) {
+      console.error('Invoice number allocation failed:', error);
+      setToastNotification('Unable to generate the invoice number. The bill was not saved.');
+      setTimeout(() => setToastNotification(null), 5000);
+      return;
+    }
 
     const paidAmount =
       paymentMethod === 'CASH'
@@ -705,12 +881,14 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
 
     const newInvoice: Invoice = {
       id: generateId('inv'),
-      invoiceNumber: generateInvoiceNumber(1000 + Math.floor(Math.random() * 800)),
+      invoiceNumber: finalInvoiceNumber,
       date: new Date().toISOString(),
       dueDate: paymentMethod === 'ON_ACCOUNT' ? dueDateInput : undefined,
       customer: updatedCustomerObj || finalCustomerObj,
       cashierName: activeUser.name,
       cashierRole: activeUser.role,
+      salespersonName: selectedSalesperson.name,
+      salespersonMobile: selectedSalesperson.mobile,
       items: cartItems,
       subtotal,
       itemDiscountsTotal,
@@ -740,12 +918,15 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
     // Clear cart & state
     setCartItems([]);
     setSelectedCustomer(null);
+    setSelectedSalespersonId('');
     setAppliedPromo(null);
+    setPromoDismissed(false);
     setManualDiscount(0);
     setCashTendered('');
     setPaymentNotes('');
     setGstInput('');
     setGstData(null);
+    setGstManualMode(false);
   };
 
   return (
@@ -863,11 +1044,8 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                   onChange={(e) => setQuickUnit(e.target.value as TileQtyUnit)}
                   className="w-full px-2 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                 >
-                  <option value="box">Boxes</option>
-                  <option value="pcs">Nos / Pcs</option>
-                  <option value="sqft">Sq.Ft</option>
-                  <option value="sqmt">Sq.Mt</option>
-                  <option value="set">Set / Pack</option>
+                  <option value="box">Box</option>
+                  <option value="pcs">Nos</option>
                 </select>
               </div>
             </div>
@@ -1204,7 +1382,31 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                       <p className="text-[10px] text-emerald-300/80 truncate"><strong>Address:</strong> {gstData.address}</p>
                     </div>
                   ) : (
-                    <p className="text-[11px] text-rose-300">{gstData.message}</p>
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-rose-300">{gstData.message}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGstManualMode(true);
+                          setNewCustType('LEDGER');
+                          setNewCustTax(gstInput.trim().toUpperCase());
+                          setNewCustName('');
+                          setNewCustPhone('');
+                          setNewCustEmail('');
+                          setNewCustBillingAddress('');
+                          setNewCustShippingAddress('');
+                          setNewCustCity('');
+                          setNewCustState('');
+                          setNewCustStateCode('');
+                          setNewCustPincode('');
+                          setShippingSameAsBilling(true);
+                          setShowAddCustomerModal(true);
+                        }}
+                        className="w-full px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition"
+                      >
+                        Enter B2B Customer Details Manually
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -1273,7 +1475,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                         {item.product.tileDimensions || item.product.unit} • Lot: {item.product.batchNo || 'L1'}
                       </p>
                       <div className="flex items-center space-x-2 text-[10px] text-indigo-300 font-semibold mt-0.5">
-                        <span>{formatCurrency(item.finalUnitPrice, currencySymbol)} × {item.quantity} boxes</span>
+                        <span>{formatCurrency(item.finalUnitPrice, currencySymbol)} × {item.inputQuantity ?? item.quantity} {item.selectedUnit || item.product.unit || 'unit'}</span>
                         <span className="text-amber-400">• {itemW.toFixed(1)} kg</span>
                       </div>
                     </div>
@@ -1295,6 +1497,10 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                         </button>
                       </div>
 
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[9px] text-slate-400">Disc %</label>
+                        <input type="number" min="0" max="100" step="0.01" value={item.discountPercent ?? 0} onChange={(e) => handleUpdateLineDiscount(item.product.id, Number(e.target.value))} className="w-14 px-1.5 py-1 bg-slate-900 border border-amber-500/40 rounded-lg text-[10px] text-white text-right font-bold" title="Line item discount percentage" />
+                      </div>
                       <span className="font-extrabold text-xs text-white min-w-[55px] text-right">
                         {formatCurrency(item.totalPrice, currencySymbol)}
                       </span>
@@ -1325,33 +1531,96 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
           </div>
 
           {activePromoRule ? (
-            <div className="p-2 bg-emerald-950/60 border border-emerald-500/40 rounded-xl flex items-center justify-between text-xs text-emerald-300">
-              <div>
-                <span className="font-bold">{activePromoRule.code}</span> ({activePromoRule.title})
+            <div className="space-y-1.5">
+              <div className="flex gap-2">
+                <select
+                  value={activePromoRule.code}
+                  onChange={(e) => {
+                    const nextCode = e.target.value;
+                    if (!nextCode) {
+                      setAppliedPromo(null);
+                      setPromoDismissed(true);
+                      return;
+                    }
+                    const nextPromo = eligiblePromos.find((p) => p.code === nextCode) || null;
+                    setAppliedPromo(nextPromo);
+                    setPromoDismissed(false);
+                  }}
+                  className="flex-1 px-3 py-1 bg-slate-900 border border-emerald-500/40 rounded-xl text-xs text-white font-semibold"
+                >
+                  {eligiblePromos.map((promo) => (
+                    <option key={promo.id} value={promo.code}>
+                      {promo.code} - {promo.title}
+                    </option>
+                  ))}
+                  <option value="">No Promotion</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => { setAppliedPromo(null); setPromoDismissed(true); }}
+                  className="px-3 py-1 text-[10px] text-rose-300 bg-rose-950/50 border border-rose-500/30 rounded-xl font-bold"
+                >
+                  Remove
+                </button>
               </div>
-              <span className="font-extrabold text-emerald-400">
-                -{formatCurrency(promoDiscountAmount, currencySymbol)}
-              </span>
+              <div className="p-2 bg-emerald-950/60 border border-emerald-500/40 rounded-xl flex items-center justify-between text-xs text-emerald-300">
+                <div><span className="font-bold">{activePromoRule.code}</span> ({activePromoRule.title})</div>
+                <span className="font-extrabold text-emerald-400">-{formatCurrency(promoDiscountAmount, currencySymbol)}</span>
+              </div>
             </div>
           ) : (
-            <form onSubmit={handleApplyPromoCode} className="flex gap-2">
-              <input
-                type="text"
-                value={promoInput}
-                onChange={(e) => setPromoInput(e.target.value)}
-                placeholder="Promo Code (e.g. WELCOME10)"
-                className="flex-1 px-3 py-1 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white uppercase tracking-wider focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-              <button
-                type="submit"
-                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow transition"
-              >
-                Apply
-              </button>
-            </form>
+            <div className="space-y-1.5">
+              <div className="flex gap-2">
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const nextPromo = eligiblePromos.find((p) => p.code === e.target.value) || null;
+                    if (nextPromo) { setAppliedPromo(nextPromo); setPromoDismissed(false); }
+                  }}
+                  className="flex-1 px-3 py-1 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-300"
+                >
+                  <option value="">Select Promotion (optional)</option>
+                  {eligiblePromos.map((promo) => (
+                    <option key={promo.id} value={promo.code}>{promo.code} - {promo.title}</option>
+                  ))}
+                </select>
+                <button type="button" onClick={() => setPromoDismissed(false)} className="px-3 py-1 text-[10px] text-slate-300 bg-slate-900 border border-slate-700 rounded-xl">Reset</button>
+              </div>
+              <form onSubmit={handleApplyPromoCode} className="flex gap-2">
+                <input
+                  type="text"
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value)}
+                  placeholder="Promo Code (e.g. WELCOME10)"
+                  className="flex-1 px-3 py-1 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white uppercase tracking-wider focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <button type="submit" className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow transition">Apply</button>
+              </form>
+            </div>
           )}
 
           {promoError && <p className="text-[10px] text-rose-400">{promoError}</p>}
+        </div>
+
+        {/* Salesperson Selection */}
+        <div className="bg-slate-800/80 p-3 rounded-2xl border border-slate-700">
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-[10px] font-bold text-slate-300">Salesperson *</label>
+            <span className="text-[10px] text-slate-500">Cashier: {activeUser.name}</span>
+          </div>
+          <select
+            value={selectedSalespersonId}
+            onChange={(e) => setSelectedSalespersonId(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-900 border border-indigo-500/40 rounded-xl text-xs text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">Select salesperson for this bill</option>
+            {salespersons.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.name} ({person.mobile})
+              </option>
+            ))}
+          </select>
+          {!selectedSalespersonId && <p className="text-[10px] text-amber-400 mt-1">Select a salesperson before checkout.</p>}
         </div>
 
         {/* Payment Method Selector */}
@@ -1532,57 +1801,136 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
               </div>
             </div>
 
-            <form onSubmit={handleCreateCustomerSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  {newCustType === 'LEDGER' ? 'Business / Firm Name' : 'Customer Name'}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newCustName}
-                  onChange={(e) => setNewCustName(e.target.value)}
-                  placeholder={newCustType === 'LEDGER' ? 'e.g. Royal BuildCon Pvt Ltd' : 'e.g. John Doe'}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Phone Number</label>
-                <input
-                  type="text"
-                  required
-                  value={newCustPhone}
-                  onChange={(e) => setNewCustPhone(e.target.value)}
-                  placeholder="+91 98000 00000"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Email (Optional)</label>
-                <input
-                  type="email"
-                  value={newCustEmail}
-                  onChange={(e) => setNewCustEmail(e.target.value)}
-                  placeholder="accounts@business.com"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
-
-              {newCustType === 'LEDGER' && (
+            <form onSubmit={handleCreateCustomerSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">GST Number (GSTIN)</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    {newCustType === 'LEDGER' ? 'Business / Firm Name' : 'Customer Name'} *
+                  </label>
                   <input
                     type="text"
                     required
+                    value={newCustName}
+                    onChange={(e) => setNewCustName(e.target.value)}
+                    placeholder={newCustType === 'LEDGER' ? 'e.g. Royal BuildCon Pvt Ltd' : 'e.g. John Doe'}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Mobile Number *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={newCustPhone}
+                    onChange={(e) => setNewCustPhone(e.target.value)}
+                    placeholder="9876543210"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={newCustEmail}
+                    onChange={(e) => setNewCustEmail(e.target.value)}
+                    placeholder="accounts@business.com"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">GSTIN {newCustType === 'LEDGER' ? '*' : '(Optional)'}</label>
+                  <input
+                    type="text"
                     value={newCustTax}
                     onChange={(e) => setNewCustTax(e.target.value.toUpperCase())}
                     placeholder="24AAAAA1234A1Z5"
+                    maxLength={15}
                     className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs font-mono uppercase"
                   />
                 </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-300 mb-2">Billing Address</h4>
+                <textarea
+                  required
+                  value={newCustBillingAddress}
+                  onChange={(e) => setNewCustBillingAddress(e.target.value)}
+                  rows={2}
+                  placeholder="Door / Flat, Street, Area, Locality"
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs resize-none"
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                  <input
+                    required
+                    type="text"
+                    value={newCustCity}
+                    onChange={(e) => setNewCustCity(e.target.value)}
+                    placeholder="City *"
+                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                  <input
+                    required
+                    type="text"
+                    value={newCustState}
+                    onChange={(e) => setNewCustState(e.target.value)}
+                    placeholder="State *"
+                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                  {newCustType === 'LEDGER' && (
+                    <input
+                      required
+                      type="text"
+                      value={newCustStateCode}
+                      onChange={(e) => setNewCustStateCode(e.target.value.toUpperCase())}
+                      placeholder="State Code *"
+                      maxLength={3}
+                      className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs uppercase"
+                    />
+                  )}
+                  <input
+                    type="text"
+                    value={newCustPincode}
+                    onChange={(e) => setNewCustPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="Pincode (Optional)"
+                    maxLength={6}
+                    className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-300">Shipping Address</h4>
+                  <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={shippingSameAsBilling}
+                      onChange={(e) => setShippingSameAsBilling(e.target.checked)}
+                      className="accent-indigo-500"
+                    />
+                    Same as billing
+                  </label>
+                </div>
+                {!shippingSameAsBilling && (
+                  <textarea
+                    required
+                    value={newCustShippingAddress}
+                    onChange={(e) => setNewCustShippingAddress(e.target.value)}
+                    rows={2}
+                    placeholder="Shipping / delivery address"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white text-xs resize-none"
+                  />
+                )}
+              </div>
+
+              {newCustType === 'LEDGER' && (
+                <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 text-[11px] text-emerald-200">
+                  Ledger customers require a valid GSTIN and complete billing details before they can be used on an invoice.
+                </div>
               )}
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800 sticky bottom-0 bg-slate-900">
                 <button
                   type="button"
                   onClick={() => setShowAddCustomerModal(false)}
@@ -1592,7 +1940,7 @@ export const PosBillingView: React.FC<PosBillingViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold shadow"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow"
                 >
                   Save Customer
                 </button>

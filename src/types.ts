@@ -1,7 +1,8 @@
-export type UserRole = 'ADMIN' | 'MANAGER' | 'CASHIER' | 'ACCOUNTANT' | 'WAREHOUSE';
+export type UserRole = 'ADMIN' | 'MANAGER' | 'BRANCH_MANAGER' | 'CASHIER' | 'BILLING_USER' | 'ACCOUNTANT' | 'WAREHOUSE';
 
 export interface UserProfile {
   id: string;
+  username?: string;
   name: string;
   email: string;
   role: UserRole;
@@ -61,6 +62,11 @@ export interface Customer {
   gstAddress?: string;
   taxNumber?: string;
   address?: string;
+  billingAddress?: string;
+  shippingAddress?: string;
+  city?: string;
+  state?: string;
+  stateCode?: string;
   loyaltyPoints: number;
   totalSpent: number;
   outstandingBalance: number;
@@ -95,6 +101,7 @@ export interface CartItem {
   selectedUnit?: TileQtyUnit;
   itemWeightKg?: number;
   discountAmount: number;
+  discountPercent?: number;
   finalUnitPrice: number;
   totalPrice: number;
 }
@@ -134,16 +141,24 @@ export interface Invoice {
   customer?: Customer;
   cashierName: string;
   cashierRole: UserRole;
+  salespersonName?: string;
+  salespersonMobile?: string;
   items: CartItem[];
   subtotal: number;
   itemDiscountsTotal: number;
   promoCodeApplied?: string;
+  promoDiscountPercent?: number;
   promoDiscountAmount: number;
+  branchManagerDiscountPercent?: number;
+  branchManagerDiscountAmount?: number;
+  branchManagerRemarks?: string;
+  branchManagerUserId?: string;
   manualDiscountAmount: number;
   taxTotal: number;
   cgstAmount?: number;
   sgstAmount?: number;
   igstAmount?: number;
+  roundOffAmount?: number;
   grandTotal: number;
   amountPaid: number;
   changeGiven: number;
@@ -194,6 +209,8 @@ export interface BusinessStoreDetails {
   receiptHeader: string;
   receiptFooter: string;
   upiId?: string;
+  pan?: string;
+  cin?: string;
 }
 
 export type AuditCategory = 'PRODUCT' | 'INVOICE' | 'USER' | 'PROMO' | 'STOCK' | 'SYSTEM';

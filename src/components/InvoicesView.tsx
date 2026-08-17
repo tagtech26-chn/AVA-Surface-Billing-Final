@@ -69,7 +69,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const salespersonsList = useMemo(() => {
     const set = new Set<string>();
     invoices.forEach((inv) => {
-      if (inv.cashierName) set.add(inv.cashierName);
+      if (inv.salespersonName) set.add(inv.salespersonName);
     });
     return Array.from(set);
   }, [invoices]);
@@ -84,7 +84,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     const map: Record<string, { totalSales: number; billCount: number; weightKg: number; invoices: Invoice[] }> = {};
 
     todaysInvoices.forEach((inv) => {
-      const sp = inv.cashierName || 'Unassigned';
+      const sp = inv.salespersonName || 'Unassigned';
       if (!map[sp]) {
         map[sp] = { totalSales: 0, billCount: 0, weightKg: 0, invoices: [] };
       }
@@ -110,7 +110,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     let list = activeViewMode === 'TODAY' ? todaysInvoices : invoices;
 
     if (selectedSalesperson !== 'ALL') {
-      list = list.filter((inv) => inv.cashierName === selectedSalesperson);
+      list = list.filter((inv) => inv.salespersonName === selectedSalesperson);
     }
 
     if (statusFilter !== 'ALL') {
@@ -135,7 +135,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       const matchCustomerPhone = (inv.customer?.phone || '').toLowerCase().includes(searchLower);
 
       // 4. Salesperson / Cashier Name
-      const matchSalesperson = inv.cashierName.toLowerCase().includes(searchLower);
+      const matchSalesperson = (inv.salespersonName || '').toLowerCase().includes(searchLower);
 
       // 5. Item Name or Item Code / SKU / Barcode
       const matchItem = inv.items.some((item) => {
@@ -482,7 +482,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                         <td className="p-4">
                           <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-indigo-950/80 border border-indigo-500/30 rounded-xl">
                             <User className="w-3.5 h-3.5 text-indigo-400" />
-                            <span className="font-extrabold text-xs text-indigo-200">{inv.cashierName || 'Cashier'}</span>
+                            <span className="font-extrabold text-xs text-indigo-200">{inv.salespersonName || 'Unassigned'}</span>
                           </div>
                         </td>
 

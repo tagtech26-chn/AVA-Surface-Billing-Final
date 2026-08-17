@@ -11,10 +11,10 @@ public sealed class Company
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public ICollection<Customer> Customers { get; set; } = new List<Customer>();
+    public ICollection<Salesperson> Salespersons { get; set; } = new List<Salesperson>();
     public ICollection<Product> Products { get; set; } = new List<Product>();
     public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
     public ICollection<Promotion> Promotions { get; set; } = new List<Promotion>();
-    public ICollection<Salesperson> Salespersons { get; set; } = new List<Salesperson>();
 }
 
 public sealed class Customer
@@ -33,6 +33,7 @@ public sealed class Customer
     public string? City { get; set; }
     public string? State { get; set; }
     public string? StateCode { get; set; }
+    public string? Pincode { get; set; }
     public string CustomerType { get; set; } = "B2C";
     public bool IsActive { get; set; } = true;
 }
@@ -45,9 +46,9 @@ public sealed class Salesperson
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Mobile { get; set; } = string.Empty;
-    public string? Email { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public ICollection<Invoice> Invoices { get; set; } = new List<Invoice>();
 }
 
 public sealed class Product
@@ -108,6 +109,7 @@ public sealed class AppUser
     public string DisplayName { get; set; } = string.Empty;
     public string Role { get; set; } = "BILLING_USER";
     public bool IsActive { get; set; } = true;
+    public string? PasswordHash { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
@@ -118,12 +120,20 @@ public sealed class Invoice
     public Company Company { get; set; } = null!;
     public Guid? CustomerId { get; set; }
     public Customer? Customer { get; set; }
+    public Guid? SalespersonId { get; set; }
+    public Salesperson? Salesperson { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
     public DateTime InvoiceDate { get; set; } = DateTime.UtcNow;
     public string SalespersonName { get; set; } = string.Empty;
     public string SalespersonMobile { get; set; } = string.Empty;
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
+    public decimal PromoDiscountPercent { get; set; }
+    public decimal PromoDiscountAmount { get; set; }
+    public decimal BranchManagerDiscountPercent { get; set; }
+    public decimal BranchManagerDiscountAmount { get; set; }
+    public Guid? BranchManagerUserId { get; set; }
+    public string? BranchManagerRemarks { get; set; }
     public decimal TaxableAmount { get; set; }
     public decimal CgstAmount { get; set; }
     public decimal SgstAmount { get; set; }
@@ -131,6 +141,25 @@ public sealed class Invoice
     public decimal RoundOffAmount { get; set; }
     public decimal GrandTotal { get; set; }
     public string Status { get; set; } = "UNPAID";
+    public string WorkflowStatus { get; set; } = "PAYMENT_PENDING";
+    public string PaymentMethodRequested { get; set; } = "CASH";
+    public Guid? PaymentConfirmedByUserId { get; set; }
+    public string? PaymentConfirmedByName { get; set; }
+    public DateTime? PaymentConfirmedAtUtc { get; set; }
+    public string? PaymentMethodConfirmed { get; set; }
+    public string? PaymentSpecificReference { get; set; }
+    public string? PaymentBankName { get; set; }
+    public string? PaymentCardLast4 { get; set; }
+    public string? PaymentUtr { get; set; }
+    public string? PaymentRemarks { get; set; }
+    public string? WarehouseLoadedBy { get; set; }
+    public string? WarehouseVerifiedBy { get; set; }
+    public DateTime? WarehouseLoadedAtUtc { get; set; }
+    public string? WarehouseVehicleNumber { get; set; }
+    public string? WarehouseRemarks { get; set; }
+    public DateTime? DeliveredAtUtc { get; set; }
+    public string? DeliveredByName { get; set; }
+    public string? DeliveryRemarks { get; set; }
     public string? EInvoiceIrn { get; set; }
     public string? EWayBillNumber { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
@@ -147,6 +176,7 @@ public sealed class InvoiceLine
     public Product Product { get; set; } = null!;
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
+    public decimal DiscountPercent { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal TaxableAmount { get; set; }
     public decimal CgstAmount { get; set; }

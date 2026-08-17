@@ -1,203 +1,52 @@
 import React from 'react';
 import { Invoice, BusinessStoreDetails } from '../types';
 import { formatCurrency, formatDateTime } from '../lib/utils';
-import { Printer, Download, X, Store, CheckCircle2, QrCode } from 'lucide-react';
+import { Printer, X } from 'lucide-react';
 
-interface PrintableReceiptModalProps {
-  invoice: Invoice | null;
-  onClose: () => void;
-  storeDetails: BusinessStoreDetails;
-}
+interface PrintableReceiptModalProps { invoice: Invoice | null; onClose: () => void; storeDetails: BusinessStoreDetails; }
+const money = (value: number | undefined, symbol: string) => formatCurrency(value ?? 0, symbol);
 
-export const PrintableReceiptModal: React.FC<PrintableReceiptModalProps> = ({
-  invoice,
-  onClose,
-  storeDetails
-}) => {
+const amountInWords = (value: number): string => {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const two = (n: number) => n < 20 ? ones[n] : `${tens[Math.floor(n / 10)]}${n % 10 ? ` ${ones[n % 10]}` : ''}`;
+  const under = (n: number) => { const p: string[] = []; if (Math.floor(n / 100)) p.push(`${ones[Math.floor(n / 100)]} Hundred`); if (n % 100) p.push(two(n % 100)); return p.join(' '); };
+  const whole = Math.floor(Math.abs(value)); const paise = Math.round((Math.abs(value) - whole) * 100); let n = whole; const p: string[] = [];
+  const crore = Math.floor(n / 10000000); n %= 10000000; const lakh = Math.floor(n / 100000); n %= 100000; const thousand = Math.floor(n / 1000); n %= 1000;
+  if (crore) p.push(`${under(crore)} Crore`); if (lakh) p.push(`${under(lakh)} Lakh`); if (thousand) p.push(`${under(thousand)} Thousand`); if (n) p.push(under(n));
+  return `${value < 0 ? 'Minus ' : ''}${p.join(' ') || 'Zero'} Rupees${paise ? ` and ${two(paise)} Paise` : ''} Only`;
+};
+
+export const PrintableReceiptModal: React.FC<PrintableReceiptModalProps> = ({ invoice, onClose, storeDetails }) => {
   if (!invoice) return null;
+  const customer = invoice.customer;
+  const totalDiscount = Number(invoice.itemDiscountsTotal || 0) + Number(invoice.promoDiscountAmount || 0) + Number(invoice.branchManagerDiscountAmount || 0);
+  const managerApproved = Number(invoice.branchManagerDiscountAmount || 0) > 0 || !!invoice.branchManagerUserId;
+  const taxable = Number(invoice.subtotal || 0) - totalDiscount;
+  const pages: Invoice['items'][] = [];
+  for (let i = 0; i < invoice.items.length; i += 12) pages.push(invoice.items.slice(i, i + 12));
+  if (!pages.length) pages.push([]);
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white text-slate-900 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl relative">
-        {/* Controls Header (Hidden during print) */}
-        <div className="p-4 bg-slate-900 text-white flex items-center justify-between print:hidden">
-          <div className="flex items-center space-x-2">
-            <Printer className="w-5 h-5 text-indigo-400" />
-            <span className="font-bold text-sm">Receipt & Invoice Preview</span>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={handlePrint}
-              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow transition"
-            >
-              <Printer className="w-4 h-4" />
-              <span>Print / Save PDF</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Printable Area */}
-        <div className="p-8 space-y-6 text-xs print:p-0 print:text-black font-sans">
-          {/* Store Branding Header */}
-          <div className="text-center space-y-1 border-b border-slate-200 pb-4">
-            <div className="w-10 h-10 mx-auto rounded-xl bg-slate-900 text-white flex items-center justify-center mb-1">
-              <Store className="w-5 h-5" />
-            </div>
-            <h2 className="font-black text-lg text-slate-900 uppercase tracking-tight">{storeDetails.name}</h2>
-            <p className="text-[11px] text-slate-500 italic">{storeDetails.tagline}</p>
-            <p className="text-[11px] text-slate-600">{storeDetails.address}</p>
-            <p className="text-[11px] text-slate-600">Tel: {storeDetails.phone} | Tax ID: {storeDetails.taxRegistrationNumber}</p>
-          </div>
-
-          {/* Invoice Meta */}
-          <div className="flex justify-between items-start text-[11px] bg-slate-50 p-3 rounded-2xl border border-slate-100">
-            <div>
-              <p className="font-mono font-bold text-slate-900 text-sm">{invoice.invoiceNumber}</p>
-              <p className="text-slate-500">Date: {formatDateTime(invoice.date)}</p>
-              <p className="text-slate-500">Issued By: {invoice.cashierName} ({invoice.cashierRole})</p>
-            </div>
-
-            <div className="text-right">
-              {invoice.customer ? (
-                <div>
-                  <p className="font-bold text-slate-900">Billed To:</p>
-                  <p className="text-slate-700">{invoice.customer.name}</p>
-                  <p className="text-slate-500">{invoice.customer.phone}</p>
-                </div>
-              ) : (
-                <p className="font-semibold text-slate-500">Walk-in Customer</p>
-              )}
-            </div>
-          </div>
-
-          {/* Itemized Line Items Table */}
-          <div>
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b-2 border-slate-900 text-[10px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2">Item</th>
-                  <th className="py-2 text-center">Qty</th>
-                  <th className="py-2 text-right">Unit Price</th>
-                  <th className="py-2 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 text-slate-800">
-                {invoice.items.map((item, i) => (
-                  <tr key={i}>
-                    <td className="py-2 pr-2">
-                      <p className="font-bold text-slate-900">{item.product.name}</p>
-                      <p className="text-[10px] text-slate-500 font-mono">{item.product.sku}</p>
-                    </td>
-                    <td className="py-2 text-center font-bold">{item.quantity}</td>
-                    <td className="py-2 text-right">{formatCurrency(item.finalUnitPrice, storeDetails.currencySymbol)}</td>
-                    <td className="py-2 text-right font-extrabold">{formatCurrency(item.totalPrice, storeDetails.currencySymbol)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Totals Breakdown */}
-          <div className="pt-3 border-t-2 border-slate-900 space-y-1.5 text-right font-medium text-slate-700">
-            <div className="flex justify-between">
-              <span className="text-slate-500">Subtotal:</span>
-              <span>{formatCurrency(invoice.subtotal, storeDetails.currencySymbol)}</span>
-            </div>
-
-            {invoice.promoDiscountAmount > 0 && (
-              <div className="flex justify-between text-emerald-700 font-bold">
-                <span>Promo Discount ({invoice.promoCodeApplied}):</span>
-                <span>-{formatCurrency(invoice.promoDiscountAmount, storeDetails.currencySymbol)}</span>
-              </div>
-            )}
-
-            <div className="flex justify-between">
-              <span className="text-slate-500">Tax Breakdown (VAT/GST):</span>
-              <span>{formatCurrency(invoice.taxTotal, storeDetails.currencySymbol)}</span>
-            </div>
-
-            <div className="flex justify-between font-black text-slate-900 text-base pt-2 border-t border-slate-200">
-              <span>Grand Total:</span>
-              <span>{formatCurrency(invoice.grandTotal, storeDetails.currencySymbol)}</span>
-            </div>
-
-            <div className="flex justify-between text-slate-600 text-[11px]">
-              <span>Payment Mode ({invoice.paymentMethod}):</span>
-              <span>{formatCurrency(invoice.amountPaid, storeDetails.currencySymbol)}</span>
-            </div>
-
-            {invoice.changeGiven > 0 && (
-              <div className="flex justify-between text-slate-600 text-[11px]">
-                <span>Change Returned:</span>
-                <span>{formatCurrency(invoice.changeGiven, storeDetails.currencySymbol)}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Dynamic UPI / QR Code Section */}
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3 text-left print:border-slate-300">
-            <div className="space-y-1">
-              <div className="flex items-center space-x-1.5 text-xs font-black text-slate-900">
-                <QrCode className="w-4 h-4 text-indigo-600" />
-                <span>UPI / Digital Payment QR</span>
-              </div>
-              <p className="text-[11px] font-bold text-slate-800">
-                UPI ID: <span className="font-mono text-indigo-700">{storeDetails.upiId || 'apextiles@upi'}</span>
-              </p>
-              <p className="text-[10px] text-slate-500">
-                Scan via GPay, PhonePe, Paytm, or BHIM UPI to pay <strong className="text-slate-900 font-bold">{formatCurrency(invoice.grandTotal, storeDetails.currencySymbol)}</strong>
-              </p>
-              <div className="flex items-center space-x-1 pt-0.5 text-[9px] font-bold text-slate-500 uppercase">
-                <span className="px-1.5 py-0.5 bg-slate-200/80 rounded">GPay</span>
-                <span className="px-1.5 py-0.5 bg-slate-200/80 rounded">PhonePe</span>
-                <span className="px-1.5 py-0.5 bg-slate-200/80 rounded">Paytm</span>
-                <span className="px-1.5 py-0.5 bg-slate-200/80 rounded">BHIM</span>
-              </div>
-            </div>
-
-            <div className="shrink-0 text-center space-y-0.5">
-              <div className="p-1 bg-white border border-slate-300 rounded-xl shadow-sm inline-block">
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
-                    `upi://pay?pa=${storeDetails.upiId || 'apextiles@upi'}&pn=${encodeURIComponent(
-                      storeDetails.name
-                    )}&am=${invoice.grandTotal.toFixed(2)}&cu=INR&tn=${encodeURIComponent(
-                      'Bill ' + invoice.invoiceNumber
-                    )}`
-                  )}`}
-                  alt="UPI QR Code"
-                  className="w-20 h-20 object-contain"
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-              <p className="text-[9px] font-mono font-bold text-indigo-700">
-                {formatCurrency(invoice.grandTotal, storeDetails.currencySymbol)}
-              </p>
-            </div>
-          </div>
-
-          {/* Barcode & Footer Policy */}
-          <div className="pt-6 border-t border-dashed border-slate-300 text-center space-y-2">
-            <div className="font-mono text-center tracking-widest text-lg font-bold text-slate-800">
-              ||| | ||||| || |||| ||| |||||
-            </div>
-            <p className="text-[10px] text-slate-500 uppercase font-mono">{invoice.id}</p>
-            <p className="text-[11px] text-slate-600 font-semibold">{storeDetails.receiptHeader}</p>
-            <p className="text-[10px] text-slate-400 leading-normal">{storeDetails.receiptFooter}</p>
-          </div>
-        </div>
+  return <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4 overflow-y-auto print:static print:bg-white print:p-0">
+    <style>{`@page{size:A4;margin:8mm}@media print{body{background:white!important}body>*{visibility:hidden}.ava-print-root,.ava-print-root *{visibility:visible}.ava-print-root{position:absolute;inset:0;width:100%;background:white}.ava-invoice-page{width:100%;min-height:281mm;page-break-after:always;box-shadow:none!important}.ava-invoice-page:last-child{page-break-after:auto}.print-hide{display:none!important}`}</style>
+    <div className="ava-print-root w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-y-auto">
+      <div className="p-3 bg-slate-900 text-white flex items-center justify-between print-hide rounded-t-lg sticky top-0 z-10"><span className="font-bold text-sm">AVA Surfaces — Tax Invoice Preview</span><div className="flex gap-2"><button onClick={() => window.print()} className="px-4 py-2 bg-white text-slate-900 rounded font-bold text-sm flex items-center gap-2"><Printer className="w-4 h-4"/>Print / PDF</button><button onClick={onClose} className="p-2 bg-slate-800 rounded"><X className="w-4 h-4"/></button></div></div>
+      <div className="bg-white text-black shadow-2xl">
+        {pages.map((pageItems, pageIndex) => { const last = pageIndex === pages.length - 1; return <section key={pageIndex} className="ava-invoice-page p-5 text-[10px] leading-tight">
+          <header className="border border-black">
+            <div className="grid grid-cols-[115px_1fr_170px] min-h-[90px]"><div className="border-r border-black flex items-center justify-center"><div className="text-center"><div className="text-[42px] leading-none font-black tracking-[-6px] text-[#b51f2a]">AVA</div><div className="text-[12px] tracking-[5px] font-bold">SURFACES</div></div></div><div className="p-3 text-center"><div className="text-[18px] font-black uppercase">AVA SURFACES PVT LIMITED</div><div className="font-semibold mt-1">{storeDetails.address}</div><div className="mt-1">Phone: {storeDetails.phone}{storeDetails.email ? ` | Email: ${storeDetails.email}` : ''}</div><div className="font-bold mt-1">GSTIN: {storeDetails.taxRegistrationNumber}{storeDetails.pan ? ` | PAN: ${storeDetails.pan}` : ''}</div></div><div className="border-l border-black p-2"><div className="font-black text-center border-b border-black pb-1">TAX INVOICE</div><div className="grid grid-cols-2 gap-1 mt-2"><b>Invoice No.</b><span>{invoice.invoiceNumber}</span><b>Date</b><span>{formatDateTime(invoice.date)}</span>{invoice.ewayBillNo&&<><b>E-Way Bill</b><span>{invoice.ewayBillNo}</span></>}</div></div></div>
+            <div className="grid grid-cols-2 border-t border-black"><div className="p-2 border-r border-black min-h-[78px]"><div className="font-black uppercase border-b border-black pb-1 mb-1">Buyer Details</div><div className="font-bold">{customer?.name || 'Customer Required'}</div><div>{customer?.address || 'Address required'}</div>{customer?.phone&&<div>Mobile: {customer.phone}</div>}{customer?.gstNumber&&<div className="font-bold">GSTIN: {customer.gstNumber}</div>}</div><div className="p-2 min-h-[78px]"><div className="font-black uppercase border-b border-black pb-1 mb-1">Sales & Delivery</div><div>Salesperson: <b>{invoice.salespersonName || invoice.cashierName || '-'}</b></div><div>Mobile: {invoice.salespersonMobile || '-'}</div><div>Vehicle: {invoice.vehicleNumber || '-'}</div></div></div>
+          </header>
+          <table className="w-full mt-2 border-collapse border border-black table-fixed"><thead><tr className="font-black text-center"><th className="border border-black p-1 w-[28px]">S.No</th><th className="border border-black p-1 w-[35%]">Description of Goods</th><th className="border border-black p-1 w-[65px]">HSN/SAC</th><th className="border border-black p-1 w-[45px]">GST %</th><th className="border border-black p-1 w-[45px]">Qty</th><th className="border border-black p-1 w-[55px]">Unit</th><th className="border border-black p-1 w-[75px]">Actual Rate</th><th className="border border-black p-1 w-[55px]">Disc %</th><th className="border border-black p-1">Amount</th></tr></thead><tbody>{pageItems.map((item,index)=><tr key={`${pageIndex}-${index}`}><td className="border border-black p-1 text-center">{pageIndex*12+index+1}</td><td className="border border-black p-1 font-semibold">{item.product.name}</td><td className="border border-black p-1 text-center">{item.product.hsnCode||'-'}</td><td className="border border-black p-1 text-center">{item.product.taxRate}%</td><td className="border border-black p-1 text-right">{item.inputQuantity ?? item.quantity}</td><td className="border border-black p-1 text-center">{item.selectedUnit || item.product.unit || '-'}</td><td className="border border-black p-1 text-right">{money(item.product.sellingPrice,storeDetails.currencySymbol)}</td><td className="border border-black p-1 text-right">{item.discountPercent??0}%</td><td className="border border-black p-1 text-right">{money(item.totalPrice,storeDetails.currencySymbol)}</td></tr>)}{Array.from({length:Math.max(0,12-pageItems.length)}).map((_,i)=><tr key={`blank-${pageIndex}-${i}`} className="h-[21px]"><td colSpan={9} className="border-x border-black">&nbsp;</td></tr>)}</tbody></table>
+          {!last&&<div className="font-bold italic mt-2 text-right">Continued........</div>}
+          {last&&<>
+            <div className="grid grid-cols-[1fr_260px] gap-2 mt-2"><div className="border border-black p-2"><div className="font-black uppercase mb-1">Billing Summary</div><div className="grid grid-cols-2 gap-y-1"><span>Actual Amount</span><b>{money(invoice.subtotal,storeDetails.currencySymbol)}</b><span>Total Discount</span><b>-{money(totalDiscount,storeDetails.currencySymbol)}</b>{managerApproved&&<><span className="font-bold">Approval</span><b>MANAGER APPROVED</b></>}{invoice.branchManagerRemarks&&<><span>Approval Note</span><b>{invoice.branchManagerRemarks}</b></>}</div></div><div className="border border-black p-2 space-y-1"><div className="flex justify-between"><span>Actual Amount</span><b>{money(invoice.subtotal,storeDetails.currencySymbol)}</b></div><div className="flex justify-between"><span>Total Discount</span><b>-{money(totalDiscount,storeDetails.currencySymbol)}</b></div><div className="flex justify-between"><span>Taxable Value</span><b>{money(taxable,storeDetails.currencySymbol)}</b></div>{invoice.cgstAmount!==undefined&&<div className="flex justify-between"><span>CGST</span><b>{money(invoice.cgstAmount,storeDetails.currencySymbol)}</b></div>}{invoice.sgstAmount!==undefined&&<div className="flex justify-between"><span>SGST</span><b>{money(invoice.sgstAmount,storeDetails.currencySymbol)}</b></div>}{invoice.igstAmount!==undefined&&invoice.igstAmount>0&&<div className="flex justify-between"><span>IGST</span><b>{money(invoice.igstAmount,storeDetails.currencySymbol)}</b></div>}<div className="flex justify-between"><span>Round Off</span><b>{money(invoice.roundOffAmount,storeDetails.currencySymbol)}</b></div><div className="flex justify-between border-t border-black pt-1 text-sm"><b>Grand Total</b><b>{money(invoice.grandTotal,storeDetails.currencySymbol)}</b></div></div></div>
+            <div className="grid grid-cols-2 gap-2 mt-2"><div className="border border-black p-2 min-h-[55px]"><b>Total Amount in Words:</b><br/>{amountInWords(invoice.grandTotal)}</div><div className="border border-black p-2 min-h-[55px]"><b>Tax Amount in Words:</b><br/>{amountInWords(invoice.taxTotal)}</div></div>
+            <div className="border border-black mt-2 p-2"><b>Declaration:</b> Goods once sold are subject to the terms and conditions of sale. E. &amp; O. E.</div>
+            <div className="flex justify-between items-end mt-8 px-2"><div className="font-semibold">Customer Signature</div><div className="text-right font-bold">For AVA SURFACES PVT LIMITED<br/><br/>Authorised Signatory</div></div>
+          </>}
+        </section>; })}
       </div>
     </div>
-  );
+  </div>;
 };
