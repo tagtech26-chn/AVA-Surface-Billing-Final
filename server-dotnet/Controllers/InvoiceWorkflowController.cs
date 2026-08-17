@@ -55,43 +55,82 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         if (string.IsNullOrWhiteSpace(request.Remarks))
             return BadRequest("Manager remarks are required.");
 
-        var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
+        var invoice = await db.Invoices
+            .Include(x => x.Lines)
+            .ThenInclude(x => x.Product)
+            .FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
         if (invoice is null) return NotFound();
         if (invoice.WorkflowStatus != "MANAGER_APPROVAL_PENDING")
             return BadRequest($"Invoice is currently in workflow state '{invoice.WorkflowStatus}'.");
 
-        var baseAmount = Math.Max(0m, invoice.SubTotal - invoice.DiscountAmount - invoice.PromoDiscountAmount);
+        var originalLineBases = invoice.Lines
+            .Select(line => new
+            {
+                Line = line,
+                Base = Math.Max(0m, Math.Round((line.Quantity * line.UnitPrice) - line.DiscountAmount, 2, MidpointRounding.AwayFromZero))
+            })
+            .ToList();
+
+        var baseAmount = originalLineBases.Sum(x => x.Base);
+        if (baseAmount <= 0m)
+            return BadRequest("Invoice has no taxable line value available for manager discount.");
+
         invoice.BranchManagerDiscountPercent = Math.Round(request.DiscountPercent, 2, MidpointRounding.AwayFromZero);
         invoice.BranchManagerDiscountAmount = Math.Round(baseAmount * invoice.BranchManagerDiscountPercent / 100m, 2, MidpointRounding.AwayFromZero);
         invoice.BranchManagerUserId = manager.Id;
         invoice.BranchManagerRemarks = request.Remarks.Trim();
         invoice.WorkflowStatus = "PAYMENT_PENDING";
 
-        // Recalculate total using the approved manager discount while preserving the existing tax rate.
-        var taxableBeforeManager = Math.Max(0m, invoice.TaxableAmount);
-        var revisedTaxable = Math.Max(0m, taxableBeforeManager - invoice.BranchManagerDiscountAmount);
-        var existingTax = invoice.CgstAmount + invoice.SgstAmount + invoice.IgstAmount;
-        var taxRatio = taxableBeforeManager <= 0m ? 0m : existingTax / taxableBeforeManager;
-        var revisedTax = Math.Round(revisedTaxable * taxRatio, 2, MidpointRounding.AwayFromZero);
-
-        if (invoice.IgstAmount > 0m)
+        // Allocate the approved manager discount across lines proportionally so line-level
+        // taxable/tax totals remain consistent with the invoice header and Tally export.
+        var allocated = 0m;
+        for (var index = 0; index < originalLineBases.Count; index++)
         {
-            invoice.IgstAmount = revisedTax;
-            invoice.CgstAmount = 0m;
-            invoice.SgstAmount = 0m;
-        }
-        else
-        {
-            invoice.CgstAmount = Math.Round(revisedTax / 2m, 2, MidpointRounding.AwayFromZero);
-            invoice.SgstAmount = Math.Round(revisedTax - invoice.CgstAmount, 2, MidpointRounding.AwayFromZero);
-            invoice.IgstAmount = 0m;
+            var item = originalLineBases[index];
+            var isLast = index == originalLineBases.Count - 1;
+            var managerDiscount = isLast
+                ? Math.Round(invoice.BranchManagerDiscountAmount - allocated, 2, MidpointRounding.AwayFromZero)
+                : Math.Round(invoice.BranchManagerDiscountAmount * item.Base / baseAmount, 2, MidpointRounding.AwayFromZero);
+            managerDiscount = Math.Max(0m, Math.Min(managerDiscount, item.Base));
+            allocated += managerDiscount;
+
+            var taxable = Math.Max(0m, Math.Round(item.Base - managerDiscount, 2, MidpointRounding.AwayFromZero));
+            var gstRate = Math.Max(0m, item.Line.Product?.GstRate ?? 0m);
+            var tax = Math.Round(taxable * gstRate / 100m, 2, MidpointRounding.AwayFromZero);
+
+            item.Line.TaxableAmount = taxable;
+            if (invoice.IgstAmount > 0m)
+            {
+                item.Line.CgstAmount = 0m;
+                item.Line.SgstAmount = 0m;
+                item.Line.IgstAmount = tax;
+            }
+            else
+            {
+                item.Line.CgstAmount = Math.Round(tax / 2m, 2, MidpointRounding.AwayFromZero);
+                item.Line.SgstAmount = Math.Round(tax - item.Line.CgstAmount, 2, MidpointRounding.AwayFromZero);
+                item.Line.IgstAmount = 0m;
+            }
+
+            item.Line.LineTotal = Math.Round(
+                item.Line.TaxableAmount + item.Line.CgstAmount + item.Line.SgstAmount + item.Line.IgstAmount,
+                2,
+                MidpointRounding.AwayFromZero);
         }
 
-        var revisedPreRound = Math.Round(revisedTaxable + revisedTax, 2, MidpointRounding.AwayFromZero);
-        var roundTo = 5m;
+        // Rebuild the invoice header from the recalculated lines. Customer-facing UI should
+        // expose only the combined Total Discount; manager-specific fields remain audit data.
+        invoice.DiscountAmount = Math.Round(invoice.Lines.Sum(x => x.DiscountAmount), 2, MidpointRounding.AwayFromZero);
+        invoice.PromoDiscountAmount = Math.Round(invoice.PromoDiscountAmount, 2, MidpointRounding.AwayFromZero);
+        invoice.TaxableAmount = Math.Round(invoice.Lines.Sum(x => x.TaxableAmount), 2, MidpointRounding.AwayFromZero);
+        invoice.CgstAmount = Math.Round(invoice.Lines.Sum(x => x.CgstAmount), 2, MidpointRounding.AwayFromZero);
+        invoice.SgstAmount = Math.Round(invoice.Lines.Sum(x => x.SgstAmount), 2, MidpointRounding.AwayFromZero);
+        invoice.IgstAmount = Math.Round(invoice.Lines.Sum(x => x.IgstAmount), 2, MidpointRounding.AwayFromZero);
+
+        var revisedPreRound = Math.Round(invoice.TaxableAmount + invoice.CgstAmount + invoice.SgstAmount + invoice.IgstAmount, 2, MidpointRounding.AwayFromZero);
+        const decimal roundTo = 5m;
         var roundedTotal = Math.Round(revisedPreRound / roundTo, 0, MidpointRounding.AwayFromZero) * roundTo;
         invoice.RoundOffAmount = Math.Round(roundedTotal - revisedPreRound, 2, MidpointRounding.AwayFromZero);
-        invoice.TaxableAmount = revisedTaxable;
         invoice.GrandTotal = roundedTotal;
 
         db.AuditLogs.Add(new AuditLog
