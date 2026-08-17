@@ -1,11 +1,13 @@
 using AVASurface.Server.Domain;
 using AVASurface.Server.Infrastructure;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace AVASurface.Server.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/invoice-workflow")]
 public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerBase
 {
@@ -19,10 +21,12 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         return user is null ? NotFound("No active workflow user is configured for this role.") : Ok(user);
     }
 
+    [Authorize(Roles = "BRANCH_MANAGER,ADMIN")]
     [HttpGet("manager-pending")]
     public async Task<ActionResult<IEnumerable<Invoice>>> ManagerPending(CancellationToken cancellationToken)
         => Ok(await db.Invoices.AsNoTracking().Include(x => x.Customer).Include(x => x.Salesperson).Include(x => x.Lines).ThenInclude(x => x.Product).Where(x => x.WorkflowStatus == "MANAGER_APPROVAL_PENDING").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
 
+    [Authorize(Roles = "BRANCH_MANAGER")]
     [HttpPost("{invoiceId:guid}/approve-manager-discount")]
     public async Task<ActionResult> ApproveManagerDiscount(Guid invoiceId, ManagerApprovalRequest request, CancellationToken cancellationToken)
     {
@@ -76,6 +80,7 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         return Ok(invoice);
     }
 
+    [Authorize(Roles = "BRANCH_MANAGER")]
     [HttpPost("{invoiceId:guid}/reject-manager-discount")]
     public async Task<ActionResult> RejectManagerDiscount(Guid invoiceId, ManagerRejectionRequest request, CancellationToken cancellationToken)
     {
@@ -95,14 +100,17 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         return Ok(invoice);
     }
 
+    [Authorize(Roles = "ACCOUNTANT,ACCOUNTS,ADMIN")]
     [HttpGet("pending-payments")]
     public async Task<ActionResult<IEnumerable<Invoice>>> PendingPayments(CancellationToken cancellationToken)
         => Ok(await db.Invoices.AsNoTracking().Include(x => x.Customer).Include(x => x.Salesperson).Include(x => x.Payments).Where(x => x.WorkflowStatus == "PAYMENT_PENDING").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
 
+    [Authorize(Roles = "WAREHOUSE,ADMIN")]
     [HttpGet("warehouse-ready")]
     public async Task<ActionResult<IEnumerable<Invoice>>> WarehouseReady(CancellationToken cancellationToken)
         => Ok(await db.Invoices.AsNoTracking().Include(x => x.Customer).Include(x => x.Salesperson).Include(x => x.Lines).ThenInclude(x => x.Product).Where(x => x.WorkflowStatus == "PAYMENT_CONFIRMED" || x.WorkflowStatus == "WAREHOUSE_READY").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
 
+    [Authorize(Roles = "ACCOUNTANT,ACCOUNTS")]
     [HttpPost("{invoiceId:guid}/confirm-payment")]
     public async Task<ActionResult> ConfirmPayment(Guid invoiceId, PaymentConfirmationRequest request, CancellationToken cancellationToken)
     {
@@ -147,6 +155,7 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         return Ok(await db.Invoices.AsNoTracking().Include(x => x.Payments).FirstAsync(x => x.Id == invoiceId, cancellationToken));
     }
 
+    [Authorize(Roles = "WAREHOUSE")]
     [HttpPost("{invoiceId:guid}/load")]
     public async Task<ActionResult> MarkLoaded(Guid invoiceId, WarehouseLoadRequest request, CancellationToken cancellationToken)
     {
