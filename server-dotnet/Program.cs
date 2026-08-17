@@ -19,8 +19,7 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<BillingDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"), sql =>
-        sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null)));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 builder.Services.AddScoped<BillingMasterSeedService>();
 builder.Services.AddScoped<InitialUserPasswordSeeder>();
