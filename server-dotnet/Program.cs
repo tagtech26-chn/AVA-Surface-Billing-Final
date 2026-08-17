@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,7 +16,15 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MinRequestBodyDataRate = null;
 });
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Domain entities contain bidirectional navigation properties (for example
+        // Invoice -> Company -> Invoices and Company -> Salespersons -> Company).
+        // API responses must not recursively serialize the EF graph.
+        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+        options.JsonSerializerOptions.MaxDepth = 32;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<BillingDbContext>(options =>
@@ -120,5 +129,4 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapControllers();
-
-app.Run();
+await app.RunAsync();
