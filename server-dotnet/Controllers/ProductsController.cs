@@ -1,11 +1,13 @@
 using AVASurface.Server.Domain;
 using AVASurface.Server.Infrastructure;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace AVASurface.Server.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/products")]
 public sealed class ProductsController(BillingDbContext db) : ControllerBase
 {
@@ -60,7 +62,6 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         return NoContent();
     }
 
-    // Compatibility endpoint used while migrating the existing React product state to SQL Server.
     [HttpPut("sync")]
     public async Task<ActionResult<IEnumerable<ProductDto>>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken)
     {
