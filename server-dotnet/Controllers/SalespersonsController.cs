@@ -1,5 +1,6 @@
 using AVASurface.Server.Domain;
 using AVASurface.Server.Infrastructure;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.RegularExpressions;
@@ -7,6 +8,7 @@ using System.Text.RegularExpressions;
 namespace AVASurface.Server.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/salespersons")]
 public sealed class SalespersonsController(BillingDbContext db) : ControllerBase
 {
@@ -31,13 +33,9 @@ public sealed class SalespersonsController(BillingDbContext db) : ControllerBase
     {
         var error = Validate(input);
         if (error is not null) return BadRequest(error);
-        if (!await db.Companies.AnyAsync(x => x.Id == input.CompanyId && x.IsActive, cancellationToken))
-            return BadRequest("An active company is required.");
-
+        if (!await db.Companies.AnyAsync(x => x.Id == input.CompanyId && x.IsActive, cancellationToken)) return BadRequest("An active company is required.");
         var code = input.Code.Trim().ToUpperInvariant();
-        if (await db.Salespersons.AnyAsync(x => x.CompanyId == input.CompanyId && x.Code == code, cancellationToken))
-            return Conflict("A salesperson with this code already exists for the company.");
-
+        if (await db.Salespersons.AnyAsync(x => x.CompanyId == input.CompanyId && x.Code == code, cancellationToken)) return Conflict("A salesperson with this code already exists for the company.");
         var row = new Salesperson { CompanyId = input.CompanyId, Code = code, Name = input.Name.Trim(), Mobile = input.Mobile.Trim(), IsActive = input.IsActive };
         db.Salespersons.Add(row);
         await db.SaveChangesAsync(cancellationToken);
@@ -51,16 +49,9 @@ public sealed class SalespersonsController(BillingDbContext db) : ControllerBase
         if (error is not null) return BadRequest(error);
         var row = await db.Salespersons.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (row is null) return NotFound();
-
         var code = input.Code.Trim().ToUpperInvariant();
-        if (await db.Salespersons.AnyAsync(x => x.Id != id && x.CompanyId == input.CompanyId && x.Code == code, cancellationToken))
-            return Conflict("A salesperson with this code already exists for the company.");
-
-        row.CompanyId = input.CompanyId;
-        row.Code = code;
-        row.Name = input.Name.Trim();
-        row.Mobile = input.Mobile.Trim();
-        row.IsActive = input.IsActive;
+        if (await db.Salespersons.AnyAsync(x => x.Id != id && x.CompanyId == input.CompanyId && x.Code == code, cancellationToken)) return Conflict("A salesperson with this code already exists for the company.");
+        row.CompanyId = input.CompanyId; row.Code = code; row.Name = input.Name.Trim(); row.Mobile = input.Mobile.Trim(); row.IsActive = input.IsActive;
         await db.SaveChangesAsync(cancellationToken);
         return Ok(ToDto(row));
     }
@@ -85,7 +76,6 @@ public sealed class SalespersonsController(BillingDbContext db) : ControllerBase
     }
 
     private static SalespersonDto ToDto(Salesperson x) => new(x.Id, x.CompanyId, x.Code, x.Name, x.Mobile, x.IsActive);
-
     public sealed record SalespersonRequest(Guid CompanyId, string Code, string Name, string Mobile, bool IsActive = true);
     public sealed record SalespersonDto(Guid Id, Guid CompanyId, string Code, string Name, string Mobile, bool IsActive);
 }
