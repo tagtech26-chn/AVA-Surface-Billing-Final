@@ -28,6 +28,19 @@ interface WorkflowInvoice {
 interface Props { activeUser: UserProfile; currencySymbol: string; onPaymentConfirmed?: (invoice: WorkflowInvoice) => void; }
 const inputClass = 'px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500';
 
+const authHeaders = (json = false): HeadersInit => {
+  const token = localStorage.getItem('avasurface_auth_token');
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
+};
+
+const readError = async (response: Response) => {
+  const text = await response.text();
+  return text || `HTTP ${response.status}`;
+};
+
 export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbol, onPaymentConfirmed }) => {
   const isAccounts = activeUser.role === 'ACCOUNTANT';
   const isWarehouse = activeUser.role === 'WAREHOUSE';
@@ -53,8 +66,8 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
 
   const resolveBackendUser = async () => {
     const role = activeUser.role === 'MANAGER' ? 'BRANCH_MANAGER' : activeUser.role;
-    const response = await fetch(`/api/invoice-workflow/workflow-user?role=${encodeURIComponent(role)}`);
-    if (!response.ok) throw new Error('No backend workflow user is configured for this role.');
+    const response = await fetch(`/api/invoice-workflow/workflow-user?role=${encodeURIComponent(role)}`, { headers: authHeaders() });
+    if (!response.ok) throw new Error(await readError(response));
     const user = await response.json();
     const id = String(user.id); setBackendUserId(id); return id;
   };
@@ -64,8 +77,8 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
     try {
       if (!backendUserId) await resolveBackendUser();
       const endpoint = isManager ? '/api/invoice-workflow/manager-pending' : isAccounts ? '/api/invoice-workflow/pending-payments' : '/api/invoice-workflow/warehouse-ready';
-      const response = await fetch(endpoint);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const response = await fetch(endpoint, { headers: authHeaders() });
+      if (!response.ok) throw new Error(await readError(response));
       setInvoices(await response.json()); setMessage('');
     } catch (error) { console.error(error); setMessage(error instanceof Error ? error.message : 'Unable to load workflow invoices.'); }
     finally { setLoading(false); }
@@ -80,8 +93,8 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
     if (!reference.trim()) return setMessage('Payment receipt/reference is required.');
     if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) return setMessage('Enter the last 4 digits for card payment.');
     if ((method === 'UPI_QR' || method === 'BANK_TRANSFER') && !utr.trim()) return setMessage('UTR / transaction ID is required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/confirm-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: backendUserId, amount: Number(amount), method, specificReference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null }) });
-    if (!response.ok) return setMessage(await response.text());
+    const response = await fetch(`/api/invoice-workflow/${selected.id}/confirm-payment`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, amount: Number(amount), method, specificReference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null }) });
+    if (!response.ok) return setMessage(await readError(response));
     const confirmed = await response.json() as WorkflowInvoice;
     setMessage('Payment confirmed. Invoice released to Warehouse and is PRINT READY.'); onPaymentConfirmed?.(confirmed); setSelectedId(null); await loadInvoices();
   };
@@ -90,24 +103,24 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
     if (!selected || !backendUserId) return setMessage('Manager identity is not available.');
     if (!managerDiscount || Number(managerDiscount) <= 0 || Number(managerDiscount) > 100) return setMessage('Enter an approved additional discount between 0% and 100%.');
     if (!managerRemarks.trim()) return setMessage('Manager remarks are required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/approve-manager-discount`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: backendUserId, discountPercent: Number(managerDiscount), remarks: managerRemarks.trim() }) });
-    if (!response.ok) return setMessage(await response.text());
+    const response = await fetch(`/api/invoice-workflow/${selected.id}/approve-manager-discount`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, discountPercent: Number(managerDiscount), remarks: managerRemarks.trim() }) });
+    if (!response.ok) return setMessage(await readError(response));
     setMessage('Manager approved. Total discount has been recalculated and the invoice is now with Accounts.'); setSelectedId(null); setManagerDiscount(''); setManagerRemarks(''); await loadInvoices();
   };
 
   const rejectManagerDiscount = async () => {
     if (!selected || !backendUserId) return setMessage('Manager identity is not available.');
     if (!managerRemarks.trim()) return setMessage('Rejection remarks are required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/reject-manager-discount`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: backendUserId, remarks: managerRemarks.trim() }) });
-    if (!response.ok) return setMessage(await response.text());
+    const response = await fetch(`/api/invoice-workflow/${selected.id}/reject-manager-discount`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, remarks: managerRemarks.trim() }) });
+    if (!response.ok) return setMessage(await readError(response));
     setMessage('Additional discount rejected. Invoice returned for billing action.'); setSelectedId(null); setManagerDiscount(''); setManagerRemarks(''); await loadInvoices();
   };
 
   const markLoaded = async () => {
     if (!selected || !backendUserId) return setMessage('Warehouse user identity is not available.');
     if (!loadedBy.trim() || !verifiedBy.trim()) return setMessage('Loaded By and Verified By are required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: backendUserId, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null }) });
-    if (!response.ok) return setMessage(await response.text());
+    const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null }) });
+    if (!response.ok) return setMessage(await readError(response));
     setMessage('Warehouse loading and verification completed. Order is now COMPLETED.'); setSelectedId(null); setLoadedBy(''); setVerifiedBy(''); setVehicleNumber(''); setWarehouseRemarks(''); await loadInvoices();
   };
 
