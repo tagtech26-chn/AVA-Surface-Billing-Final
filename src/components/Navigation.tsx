@@ -98,7 +98,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       id: userRole === 'WAREHOUSE' ? 'accounts' : 'warehouse',
       label:
         userRole === 'WAREHOUSE'
-          ? 'Warehouse Loading & Delivery'
+          ? 'Warehouse Loading & Completion'
           : 'Warehouse & Logistics',
       shortLabel: 'Dispatch',
       icon: Truck,
@@ -189,7 +189,7 @@ export const Navigation: React.FC<NavigationProps> = ({
     ACCOUNTANT:
       'Financial reports, payment confirmation, expenses, Tally bridge, e-Way and audit review.',
     WAREHOUSE:
-      'Dispatch, payment-released invoices, loading verification and delivery confirmation.'
+      'Warehouse loading, verification and order completion after payment release.'
   }[userRole];
 
   return (
