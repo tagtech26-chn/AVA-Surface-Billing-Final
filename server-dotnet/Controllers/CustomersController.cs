@@ -40,7 +40,7 @@ public sealed class CustomersController(BillingDbContext db) : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = customer.Id }, ToDto(customer));
     }
 
-    [HttpPut("{id:guid")]
+    [HttpPut("{id:guid}")]
     public async Task<ActionResult<CustomerDto>> Update(Guid id, CustomerRequest input, CancellationToken cancellationToken)
     {
         var validation = Validate(input);
