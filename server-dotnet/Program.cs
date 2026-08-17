@@ -2,7 +2,6 @@ using AVASurface.Server.Infrastructure;
 using AVASurface.Server.Services;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
-using AVASurface.Server.Controllers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +22,7 @@ builder.Services.AddDbContext<BillingDbContext>(options =>
         sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null)));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 builder.Services.AddScoped<BillingMasterSeedService>();
+builder.Services.AddScoped<InitialUserPasswordSeeder>();
 builder.Services.Configure<GstVerificationOptions>(builder.Configuration.GetSection("GstVerification"));
 builder.Services.AddHttpClient("GstVerification", client =>
 {
@@ -63,6 +63,9 @@ using (var scope = app.Services.CreateScope())
 
     var billingMasterSeed = scope.ServiceProvider.GetRequiredService<BillingMasterSeedService>();
     await billingMasterSeed.SeedAsync();
+
+    var passwordSeeder = scope.ServiceProvider.GetRequiredService<InitialUserPasswordSeeder>();
+    await passwordSeeder.SeedAsync();
 }
 
 app.MapControllers();
