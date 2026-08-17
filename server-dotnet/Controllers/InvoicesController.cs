@@ -11,6 +11,7 @@ namespace AVASurface.Server.Controllers;
 
 [ApiController]
 [Route("api/invoices")]
+[Authorize]
 public sealed class InvoicesController(
     BillingDbContext db,
     MonthlyInvoicePartitionService monthlyPartitions) : ControllerBase
@@ -37,6 +38,7 @@ public sealed class InvoicesController(
         return invoice is null ? NotFound() : Ok(invoice);
     }
 
+    [Authorize(Roles = "CASHIER,BILLING_USER")]
     [HttpPost("{invoiceId:guid}/request-manager-discount")]
     public async Task<ActionResult> RequestManagerDiscount(Guid invoiceId, ManagerDiscountRequest request, CancellationToken cancellationToken)
     {
@@ -218,50 +220,24 @@ public sealed class InvoicesController(
             var invoiceDate = request.InvoiceDate == default ? DateTime.UtcNow : request.InvoiceDate;
             var fiscalStartYear = invoiceDate.Month >= 4 ? invoiceDate.Year : invoiceDate.Year - 1;
             var fy = $"{fiscalStartYear % 100:00}{(fiscalStartYear + 1) % 100:00}";
-            var lockResource = $"AVASurface.InvoiceSeries.{request.CompanyId}.{fy}";
+            var invoiceNumber = await GenerateInvoiceNumberAsync(fy, cancellationToken);
 
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"EXEC sp_getapplock @Resource = {lockResource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000",
-                cancellationToken);
-
-            var existingNumbers = await db.Invoices
-                .Where(x => x.CompanyId == request.CompanyId && x.InvoiceNumber.StartsWith("AVA-"))
-                .Select(x => x.InvoiceNumber)
-                .ToListAsync(cancellationToken);
-
-            var nextInvoiceNumber = 1;
-            foreach (var existingNumber in existingNumbers)
-            {
-                var parts = existingNumber.Split('-');
-                if (parts.Length != 3 || !parts[0].Equals("AVA", StringComparison.OrdinalIgnoreCase) || !parts[2].Equals(fy, StringComparison.Ordinal))
-                    continue;
-
-                if (int.TryParse(parts[1], out var parsed) && parsed >= nextInvoiceNumber)
-                    nextInvoiceNumber = parsed + 1;
-            }
-
-            var generatedInvoiceNumber = $"AVA-{nextInvoiceNumber:0000}-{fy}";
-            var invoiceId = Guid.NewGuid();
             var invoice = new Invoice
             {
-                Id = invoiceId,
-                CompanyId = request.CompanyId,
+                Id = Guid.NewGuid(),
+                CompanyId = company.Id,
                 CustomerId = customer?.Id,
-                Customer = customer,
                 SalespersonId = salesperson.Id,
-                Salesperson = salesperson,
-                InvoiceNumber = generatedInvoiceNumber,
+                InvoiceNumber = invoiceNumber,
                 InvoiceDate = invoiceDate,
                 SalespersonName = salesperson.Name,
                 SalespersonMobile = salesperson.Mobile,
                 SubTotal = calculation.SubTotal,
-                DiscountAmount = calculation.LineDiscountAmount,
-                PromoDiscountPercent = promotions.Sum(x => x.DiscountPercent),
+                DiscountAmount = calculation.DiscountAmount,
+                PromoDiscountPercent = calculation.PromoDiscountPercent,
                 PromoDiscountAmount = calculation.PromoDiscountAmount,
                 BranchManagerDiscountPercent = 0m,
                 BranchManagerDiscountAmount = 0m,
-                BranchManagerUserId = null,
-                BranchManagerRemarks = null,
                 TaxableAmount = calculation.TaxableAmount,
                 CgstAmount = calculation.CgstAmount,
                 SgstAmount = calculation.SgstAmount,
@@ -274,109 +250,29 @@ public sealed class InvoicesController(
                 CreatedAtUtc = DateTime.UtcNow
             };
 
-            var promoPercent = Math.Min(100m, Math.Max(0m, promotions.Where(x => x.IsActive).Sum(x => x.DiscountPercent)));
-            var lineBases = request.Lines.Select(line =>
+            foreach (var line in calculation.Lines)
             {
-                var product = products[line.ProductId];
-                var gross = Math.Round(line.Quantity * product.SellingPrice, 2, MidpointRounding.AwayFromZero);
-                var lineDiscount = Math.Round(gross * line.DiscountPercent / 100m, 2, MidpointRounding.AwayFromZero);
-                return new
-                {
-                    Line = line,
-                    Product = product,
-                    Gross = gross,
-                    LineDiscount = lineDiscount,
-                    AfterLineDiscount = Math.Max(0m, gross - lineDiscount)
-                };
-            }).ToList();
-
-            var afterLineDiscountTotal = lineBases.Sum(x => x.AfterLineDiscount);
-            var promoDiscountTotal = calculation.PromoDiscountAmount;
-            var afterPromoTotal = Math.Max(0m, afterLineDiscountTotal - promoDiscountTotal);
-            var lineResults = new List<(InvoiceLine Line, decimal Taxable, decimal Cgst, decimal Sgst, decimal Igst, decimal Total)>();
-
-            foreach (var item in lineBases)
-            {
-                var promoAllocation = afterLineDiscountTotal <= 0m
-                    ? 0m
-                    : Math.Round(promoDiscountTotal * item.AfterLineDiscount / afterLineDiscountTotal, 2, MidpointRounding.AwayFromZero);
-                var taxable = Math.Max(0m, item.AfterLineDiscount - promoAllocation);
-                var tax = Math.Round(taxable * item.Product.GstRate / 100m, 2, MidpointRounding.AwayFromZero);
-
-                decimal cgst;
-                decimal sgst;
-                decimal igst;
-                if (request.InterState)
-                {
-                    cgst = 0m;
-                    sgst = 0m;
-                    igst = tax;
-                }
-                else
-                {
-                    cgst = Math.Round(tax / 2m, 2, MidpointRounding.AwayFromZero);
-                    sgst = Math.Round(tax - cgst, 2, MidpointRounding.AwayFromZero);
-                    igst = 0m;
-                }
-
-                var lineTotal = Math.Round(taxable + cgst + sgst + igst, 2, MidpointRounding.AwayFromZero);
-                var invoiceLine = new InvoiceLine
+                invoice.Lines.Add(new InvoiceLine
                 {
                     Id = Guid.NewGuid(),
-                    InvoiceId = invoiceId,
-                    ProductId = item.Product.Id,
-                    Product = item.Product,
-                    Quantity = item.Line.Quantity,
-                    UnitPrice = item.Product.SellingPrice,
-                    DiscountPercent = item.Line.DiscountPercent,
-                    DiscountAmount = item.LineDiscount,
-                    TaxableAmount = taxable,
-                    CgstAmount = cgst,
-                    SgstAmount = sgst,
-                    IgstAmount = igst,
-                    LineTotal = lineTotal
-                };
-
-                lineResults.Add((invoiceLine, taxable, cgst, sgst, igst, lineTotal));
+                    InvoiceId = invoice.Id,
+                    ProductId = line.ProductId,
+                    Quantity = line.Quantity,
+                    UnitPrice = line.UnitPrice,
+                    DiscountPercent = line.DiscountPercent,
+                    DiscountAmount = line.DiscountAmount,
+                    TaxableAmount = line.TaxableAmount,
+                    CgstAmount = line.CgstAmount,
+                    SgstAmount = line.SgstAmount,
+                    IgstAmount = line.IgstAmount,
+                    LineTotal = line.LineTotal
+                });
             }
-
-            // Reconcile two-decimal line rounding to the authoritative invoice totals.
-            if (lineResults.Count > 0)
-            {
-                var last = lineResults[^1];
-                var taxableDelta = calculation.TaxableAmount - lineResults.Sum(x => x.Taxable);
-                var cgstDelta = calculation.CgstAmount - lineResults.Sum(x => x.Cgst);
-                var sgstDelta = calculation.SgstAmount - lineResults.Sum(x => x.Sgst);
-                var igstDelta = calculation.IgstAmount - lineResults.Sum(x => x.Igst);
-                var totalDelta = (calculation.TaxableAmount + calculation.CgstAmount + calculation.SgstAmount + calculation.IgstAmount)
-                    - lineResults.Sum(x => x.Total);
-
-                last.Line.TaxableAmount += taxableDelta;
-                last.Line.CgstAmount += cgstDelta;
-                last.Line.SgstAmount += sgstDelta;
-                last.Line.IgstAmount += igstDelta;
-                last.Line.LineTotal += totalDelta;
-            }
-
-            foreach (var result in lineResults)
-                invoice.Lines.Add(result.Line);
 
             db.Invoices.Add(invoice);
-
-            var creatorUserId = GetAuthenticatedUserId();
-            db.AuditLogs.Add(new AuditLog
-            {
-                UserId = creatorUserId,
-                Action = "INVOICE_CREATED",
-                EntityName = nameof(Invoice),
-                EntityId = invoiceId,
-                Details = $"Invoice created by {User.Identity?.Name ?? "authenticated billing user"} with payment method '{request.PaymentMethodRequested}' pending Accounts confirmation.",
-                CreatedAtUtc = DateTime.UtcNow
-            });
-
             await db.SaveChangesAsync(cancellationToken);
-            await monthlyPartitions.MirrorInvoiceAsync(invoice.Id, invoice.InvoiceDate, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            await monthlyPartitions.MirrorInvoiceAsync(invoice.Id, invoice.InvoiceDate, cancellationToken);
 
             return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, invoice);
         }
@@ -387,48 +283,26 @@ public sealed class InvoicesController(
         }
     }
 
-    private Guid? GetAuthenticatedUserId()
+    private async Task<string> GenerateInvoiceNumberAsync(string fy, CancellationToken cancellationToken)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return Guid.TryParse(value, out var userId) ? userId : null;
+        var count = await db.Invoices.CountAsync(x => x.InvoiceNumber.EndsWith($"-{fy}"), cancellationToken);
+        return $"AVA-{count + 1:0000}-{fy}";
     }
 
     private static string? ValidateRequest(InvoiceRequest request)
     {
-        if (request.CompanyId == Guid.Empty) return "CompanyId is required.";
-        if (request.InvoiceDate == default) return "Invoice date is required.";
-        if (request.SalespersonId == Guid.Empty) return "Salesperson is required.";
-
-        var requestedMethod = request.PaymentMethodRequested.Trim().ToUpperInvariant();
-        if (requestedMethod is not ("CASH" or "CARD" or "UPI_QR" or "BANK_TRANSFER"))
-            return "Payment method must be CASH, CARD, UPI_QR or BANK_TRANSFER.";
-
-        if (request.BranchManagerDiscountPercent < 0 || request.BranchManagerDiscountPercent > 100)
-            return "Branch Manager discount must be between 0% and 100%.";
-
+        if (request.CompanyId == Guid.Empty)
+            return "Company is required.";
+        if (request.SalespersonId == Guid.Empty)
+            return "Salesperson is required.";
+        if (request.Lines is null || request.Lines.Count == 0)
+            return "At least one invoice line is required.";
+        if (request.RoundTo < 0)
+            return "RoundTo cannot be negative.";
         return null;
     }
 
     private static bool IsValidGstin(string? gstin)
         => !string.IsNullOrWhiteSpace(gstin) &&
            Regex.IsMatch(gstin.Trim().ToUpperInvariant(), "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$");
-
-    public sealed record ManagerDiscountRequest(Guid UserId, string Remarks);
-
-    public sealed record InvoiceRequest(
-        Guid CompanyId,
-        Guid? CustomerId,
-        Guid SalespersonId,
-        string? InvoiceNumber,
-        DateTime InvoiceDate,
-        List<InvoiceLineRequest> Lines,
-        List<string> PromotionCodes,
-        string PaymentMethodRequested = "CASH",
-        decimal BranchManagerDiscountPercent = 0m,
-        Guid? BranchManagerUserId = null,
-        string? BranchManagerRemarks = null,
-        bool InterState = false,
-        decimal RoundTo = 5m);
-
-    public sealed record InvoiceLineRequest(Guid ProductId, decimal Quantity, decimal DiscountPercent = 0m);
 }
