@@ -1,14 +1,14 @@
 using AVASurface.Server.Controllers;
 using AVASurface.Server.Infrastructure;
 using AVASurface.Server.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// The existing AVASurface frontend performs a one-time catalog synchronization.
-// Allow large local development payloads to arrive without Kestrel's default
-// minimum request-body data-rate terminating the migration request.
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 50 * 1024 * 1024;
@@ -31,6 +31,29 @@ builder.Services.AddHttpClient("GstVerification", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("AVASurface-Billing/1.0");
 });
 
+var jwtSecret = builder.Configuration["Authentication:JwtSecret"];
+if (string.IsNullOrWhiteSpace(jwtSecret) || Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+    throw new InvalidOperationException("Authentication:JwtSecret must contain at least 32 bytes.");
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = "AVASurface",
+            ValidAudience = "AVASurface.LocalBilling",
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            ClockSkew = TimeSpan.FromMinutes(1)
+        };
+    });
+
+builder.Services.AddAuthorization();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
@@ -46,6 +69,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("Frontend");
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapGet("/api/health", async (BillingDbContext db) =>
 {
     var canConnect = await db.Database.CanConnectAsync();
