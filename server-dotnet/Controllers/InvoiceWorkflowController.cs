@@ -3,6 +3,7 @@ using AVASurface.Server.Infrastructure;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace AVASurface.Server.Controllers;
 
@@ -30,7 +31,11 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
     [HttpPost("{invoiceId:guid}/approve-manager-discount")]
     public async Task<ActionResult> ApproveManagerDiscount(Guid invoiceId, ManagerApprovalRequest request, CancellationToken cancellationToken)
     {
-        var manager = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == request.UserId && x.IsActive && x.Role == "BRANCH_MANAGER", cancellationToken);
+        var managerId = GetAuthenticatedUserId();
+        if (!managerId.HasValue || request.UserId != managerId.Value)
+            return Forbid();
+
+        var manager = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == managerId.Value && x.IsActive && x.Role == "BRANCH_MANAGER", cancellationToken);
         if (manager is null) return BadRequest("Only an active Branch Manager can approve an additional discount.");
         if (request.DiscountPercent <= 0 || request.DiscountPercent > 100) return BadRequest("Approved additional discount must be greater than 0% and not exceed 100%.");
         if (string.IsNullOrWhiteSpace(request.Remarks)) return BadRequest("Manager remarks are required.");
@@ -84,7 +89,11 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
     [HttpPost("{invoiceId:guid}/reject-manager-discount")]
     public async Task<ActionResult> RejectManagerDiscount(Guid invoiceId, ManagerRejectionRequest request, CancellationToken cancellationToken)
     {
-        var manager = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == request.UserId && x.IsActive && x.Role == "BRANCH_MANAGER", cancellationToken);
+        var managerId = GetAuthenticatedUserId();
+        if (!managerId.HasValue || request.UserId != managerId.Value)
+            return Forbid();
+
+        var manager = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == managerId.Value && x.IsActive && x.Role == "BRANCH_MANAGER", cancellationToken);
         if (manager is null) return BadRequest("Only an active Branch Manager can reject an additional discount request.");
         if (string.IsNullOrWhiteSpace(request.Remarks)) return BadRequest("Rejection remarks are required.");
         var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
@@ -114,7 +123,11 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
     [HttpPost("{invoiceId:guid}/confirm-payment")]
     public async Task<ActionResult> ConfirmPayment(Guid invoiceId, PaymentConfirmationRequest request, CancellationToken cancellationToken)
     {
-        var accountsUser = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.UserId && x.IsActive && (x.Role == "ACCOUNTANT" || x.Role == "ACCOUNTS"), cancellationToken);
+        var accountsId = GetAuthenticatedUserId();
+        if (!accountsId.HasValue || request.UserId != accountsId.Value)
+            return Forbid();
+
+        var accountsUser = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == accountsId.Value && x.IsActive && (x.Role == "ACCOUNTANT" || x.Role == "ACCOUNTS"), cancellationToken);
         if (accountsUser is null) return BadRequest("Only an active Accounts user can confirm payment.");
         if (request.Amount <= 0) return BadRequest("Payment amount must be greater than zero.");
         var requestedMethod = request.Method.Trim().ToUpperInvariant();
@@ -159,7 +172,11 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
     [HttpPost("{invoiceId:guid}/load")]
     public async Task<ActionResult> MarkLoaded(Guid invoiceId, WarehouseLoadRequest request, CancellationToken cancellationToken)
     {
-        var warehouseUser = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == request.UserId && x.IsActive && x.Role == "WAREHOUSE", cancellationToken);
+        var warehouseId = GetAuthenticatedUserId();
+        if (!warehouseId.HasValue || request.UserId != warehouseId.Value)
+            return Forbid();
+
+        var warehouseUser = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == warehouseId.Value && x.IsActive && x.Role == "WAREHOUSE", cancellationToken);
         if (warehouseUser is null) return BadRequest("Only an active Warehouse user can load an invoice.");
         if (string.IsNullOrWhiteSpace(request.LoadedBy) || string.IsNullOrWhiteSpace(request.VerifiedBy)) return BadRequest("Loaded By and Verified By are required.");
         var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
@@ -171,6 +188,12 @@ public sealed class InvoiceWorkflowController(BillingDbContext db) : ControllerB
         invoice.DeliveredByName = request.VerifiedBy.Trim();
         db.AuditLogs.Add(new AuditLog { UserId = warehouseUser.Id, Action = "INVOICE_COMPLETED_AFTER_WAREHOUSE_LOAD", EntityName = nameof(Invoice), EntityId = invoice.Id, Details = $"Warehouse loading completed by {request.LoadedBy}; verified by {request.VerifiedBy}; vehicle {request.VehicleNumber}. Order marked COMPLETED.", CreatedAtUtc = DateTime.UtcNow });
         await db.SaveChangesAsync(cancellationToken); return Ok(invoice);
+    }
+
+    private Guid? GetAuthenticatedUserId()
+    {
+        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return Guid.TryParse(value, out var userId) ? userId : null;
     }
 
     public sealed record ManagerApprovalRequest(Guid UserId, decimal DiscountPercent, string Remarks);
