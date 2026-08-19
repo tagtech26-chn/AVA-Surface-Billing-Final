@@ -35,6 +35,11 @@ export interface Product {
   batchNo?: string;
   pricePerSqFt?: number;
   weightPerBoxKg?: number;
+  sellingPricePerPcs?: number;
+  sellingPricePerBox?: number;
+  sellingPricePerSqFt?: number;
+  sellingPricePerSqMt?: number;
+  sellingPricePerSet?: number;
 }
 
 export interface StockAdjustment {
@@ -117,6 +122,29 @@ export interface PaymentRecord {
   referenceNumber?: string;
   date: string;
   notes?: string;
+}
+
+export type ManagerApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface ManagerDiscountApproval {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  customerName: string;
+  requestedByUserId: string;
+  requestedByName: string;
+  requestedAt: string;
+  status: ManagerApprovalStatus;
+  approvedDiscountAmount?: number;
+  approvedByUserId?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
+  items: CartItem[];
+  subtotal: number;
+  existingDiscountAmount: number;
+  taxTotal: number;
+  currentGrandTotal: number;
 }
 
 export interface DraftBill {
@@ -218,37 +246,12 @@ export type AuditSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface AuditLog {
   id: string;
-  timestamp: string;
   category: AuditCategory;
   severity: AuditSeverity;
   action: string;
+  entityType: string;
+  entityId?: string;
   performedBy: string;
-  performedByRole: UserRole;
-  targetId?: string;
-  targetName?: string;
-  details: string;
-  previousValue?: string;
-  newValue?: string;
-  ipAddress?: string;
-}
-
-export interface TallyLedgerMapping {
-  salesLedger: string;
-  cashLedger: string;
-  bankLedger: string;
-  cgstLedger: string;
-  sgstLedger: string;
-  igstLedger: string;
-  debtorsGroup: string;
-  companyName: string;
-}
-
-export interface AIInsightResponse {
-  insight: string;
-  recommendations: string[];
-  promoIdea?: {
-    code: string;
-    discount: string;
-    description: string;
-  };
+  performedAt: string;
+  details?: string;
 }
