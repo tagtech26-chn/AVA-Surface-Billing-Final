@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { LoginView } from './components/LoginView';
-import { Storage } from './lib/storage';
+import { Storage, hydrateProductsFromServer } from './lib/storage';
 import { UserProfile } from './types';
 import './index.css';
 
@@ -57,6 +57,7 @@ function AuthenticatedApp() {
     const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
     Storage.saveUsers(nextUsers);
     Storage.saveActiveUserId(user.id);
+    void hydrateProductsFromServer();
   }, [user]);
 
   if (!user) {
