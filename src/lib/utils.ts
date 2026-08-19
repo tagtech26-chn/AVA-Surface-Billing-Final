@@ -36,17 +36,16 @@ export function generateId(prefix = 'id'): string {
 
 export function canPerformAction(
   role: UserRole,
-  action: 'MANAGE_USERS' | 'MANAGE_PRODUCTS' | 'STOCK_ADJUSTMENT' | 'MANAGE_PROMOS' | 'CREATE_POS_BILL' | 'MANAGE_EXPENSES' | 'VIEW_FINANCIAL_REPORTS' | 'PROCESS_REFUND' | 'MANAGE_WAREHOUSE' | 'EXPORT_TALLY' | 'MANAGE_EWAY_INVOICE' | 'VIEW_AUDIT_LOGS' | 'APPROVE_BRANCH_MANAGER_DISCOUNT' | 'CONFIRM_PAYMENTS' | 'REQUEST_MANAGER_DISCOUNT'
+  action: 'MANAGE_USERS' | 'MANAGE_PRODUCTS' | 'STOCK_ADJUSTMENT' | 'MANAGE_PROMOS' | 'CREATE_POS_BILL' | 'MANAGE_EXPENSES' | 'VIEW_FINANCIAL_REPORTS' | 'PROCESS_REFUND' | 'MANAGE_WAREHOUSE' | 'EXPORT_TALLY' | 'MANAGE_EWAY_INVOICE' | 'VIEW_AUDIT_LOGS' | 'APPROVE_BRANCH_MANAGER_DISCOUNT' | 'CONFIRM_PAYMENTS' | 'REQUEST_MANAGER_DISCOUNT' | 'VIEW_ALL_INVOICES' | 'VIEW_PENDING_MANAGER_APPROVALS'
 ): boolean {
   switch (role) {
     case 'ADMIN':
-      return action !== 'CREATE_POS_BILL' && action !== 'REQUEST_MANAGER_DISCOUNT';
+      return ['MANAGE_USERS', 'MANAGE_PRODUCTS', 'STOCK_ADJUSTMENT', 'MANAGE_PROMOS', 'VIEW_FINANCIAL_REPORTS', 'PROCESS_REFUND', 'MANAGE_WAREHOUSE', 'EXPORT_TALLY', 'MANAGE_EWAY_INVOICE', 'VIEW_AUDIT_LOGS', 'VIEW_ALL_INVOICES', 'VIEW_PENDING_MANAGER_APPROVALS', 'APPROVE_BRANCH_MANAGER_DISCOUNT'].includes(action);
     case 'MANAGER':
-      return action !== 'MANAGE_USERS' && action !== 'CREATE_POS_BILL' && action !== 'REQUEST_MANAGER_DISCOUNT';
     case 'BRANCH_MANAGER':
-      return ['MANAGE_PRODUCTS', 'MANAGE_PROMOS', 'VIEW_FINANCIAL_REPORTS', 'PROCESS_REFUND', 'APPROVE_BRANCH_MANAGER_DISCOUNT'].includes(action);
+      return ['MANAGE_PRODUCTS', 'MANAGE_PROMOS', 'VIEW_FINANCIAL_REPORTS', 'PROCESS_REFUND', 'APPROVE_BRANCH_MANAGER_DISCOUNT', 'VIEW_ALL_INVOICES', 'VIEW_PENDING_MANAGER_APPROVALS'].includes(action);
     case 'ACCOUNTANT':
-      return ['VIEW_FINANCIAL_REPORTS', 'MANAGE_EXPENSES', 'EXPORT_TALLY', 'MANAGE_EWAY_INVOICE', 'VIEW_AUDIT_LOGS', 'CONFIRM_PAYMENTS'].includes(action);
+      return ['VIEW_FINANCIAL_REPORTS', 'MANAGE_EXPENSES', 'EXPORT_TALLY', 'MANAGE_EWAY_INVOICE', 'VIEW_AUDIT_LOGS', 'CONFIRM_PAYMENTS', 'VIEW_ALL_INVOICES'].includes(action);
     case 'CASHIER':
     case 'BILLING_USER':
       return ['CREATE_POS_BILL', 'MANAGE_PRODUCTS', 'REQUEST_MANAGER_DISCOUNT'].includes(action);
@@ -55,4 +54,12 @@ export function canPerformAction(
     default:
       return false;
   }
+}
+
+export function authHeaders(json = false): HeadersInit {
+  const token = localStorage.getItem('avasurface_auth_token');
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
 }
