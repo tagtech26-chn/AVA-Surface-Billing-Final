@@ -122,9 +122,6 @@ async function createMissingSeedProducts(serverProducts: ServerProduct[]): Promi
 
   if (missing.length === 0) return serverProducts;
 
-  // Reconcile all missing SKUs in one request. The ASP.NET sync endpoint matches
-  // by SKU and only changes the products included in this payload, so existing
-  // SQL stock/pricing is not touched during startup hydration.
   const response = await fetch('/api/products/sync', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -213,7 +210,19 @@ export const Storage = {
   getUsers(): UserProfile[] { return getStorageItem<UserProfile[]>(KEYS.USERS, INITIAL_USERS); },
   saveUsers(users: UserProfile[]): void { setStorageItem(KEYS.USERS, users); },
 
-  getActiveUserId(): string { return getStorageItem<string>(KEYS.ACTIVE_USER_ID, INITIAL_USERS[0].id); },
+  getActiveUserId(): string {
+    try {
+      const authenticated = localStorage.getItem('avasurface_auth_user');
+      if (authenticated) {
+        const user = JSON.parse(authenticated) as Partial<UserProfile>;
+        if (user.id) return user.id;
+      }
+    } catch {
+      // Fall back to the persisted UI session below.
+    }
+    return getStorageItem<string>(KEYS.ACTIVE_USER_ID, INITIAL_USERS[0].id);
+  },
+
   saveActiveUserId(id: string): void { setStorageItem(KEYS.ACTIVE_USER_ID, id); },
 
   getStoreDetails(): BusinessStoreDetails { return getStorageItem<BusinessStoreDetails>(KEYS.STORE_DETAILS, INITIAL_STORE_DETAILS); },
