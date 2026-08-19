@@ -58,7 +58,7 @@ export default function App() {
     setPrintingInvoice(printableInvoice);
   };
 
-  const handleCompleteInvoice = async (newInvoice: Invoice, updatedProducts: Product[], updatedCustomer?: Customer) => {
+  const handleCompleteInvoice = async (newInvoice: Invoice, updatedProducts: Product[], updatedCustomer?: Customer): Promise<Invoice | void> => {
     const customer = updatedCustomer || newInvoice.customer;
     const customerName = customer?.name?.trim();
     const customerPhone = customer?.phone?.trim();
@@ -105,10 +105,12 @@ export default function App() {
       if (!invoiceResponse.ok) throw new Error(`Invoice backend save failed: ${await invoiceResponse.text()}`);
       const persisted = await invoiceResponse.json() as { id: string; invoiceNumber: string; grandTotal: number };
       const invoiceWithDelivery: Invoice = { ...newInvoice, id: persisted.id || newInvoice.id, invoiceNumber: persisted.invoiceNumber, customer, status: 'UNPAID', amountPaid: 0, paymentsHistory: [], deliveryStatus: 'PENDING_DISPATCH' };
-      setInvoices((prev) => [invoiceWithDelivery, ...prev]); setProducts(updatedProducts);
+      setInvoices((prev) => [invoiceWithDelivery, ...prev]);
+      setProducts(updatedProducts);
       if (updatedCustomer) setCustomers((prev) => prev.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)));
       logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}). Payment method ${newInvoice.paymentMethod} remains pending Accounts confirmation.`, invoiceWithDelivery.invoiceNumber, invoiceWithDelivery.id, 'Draft Bill', `PAYMENT_PENDING / ${newInvoice.paymentMethod}`);
-    } catch (error) { console.error('Backend invoice save failed:', error); window.alert(error instanceof Error ? error.message : 'Unable to save invoice to the backend.'); }
+      return invoiceWithDelivery;
+    } catch (error) { console.error('Backend invoice save failed:', error); window.alert(error instanceof Error ? error.message : 'Unable to save invoice to the backend.'); return; }
   };
 
   const handleUpdateEWayDetails = (invoiceId: string, ewayBillNo: string, irnNo: string, ackNo: string) => setInvoices((prev) => prev.map((inv) => inv.id === invoiceId ? { ...inv, ewayBillNo, ewayBillDate: new Date().toISOString(), irnNo, ackNo, ackDate: new Date().toISOString() } : inv));
