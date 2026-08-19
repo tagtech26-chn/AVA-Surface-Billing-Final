@@ -311,7 +311,84 @@ export const ModernPosBillingView: React.FC<Props> = ({
       <div className="rounded-2xl border-2 border-indigo-500/50 bg-slate-900 shadow-2xl overflow-visible">
         <div className="px-5 py-3 border-b border-slate-800 flex items-center justify-between"><div className="flex items-center gap-2"><PackageSearch className="w-5 h-5 text-indigo-400" /><div><p className="text-[10px] uppercase tracking-widest text-indigo-400 font-black">Item Entry</p><p className="text-sm font-black text-white">Type item code, SKU or description</p></div></div><span className="text-[10px] font-black text-emerald-400">SERVER SEARCH • MAX 20 MATCHES</span></div>
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 items-end">
-          <div className="md:col-span-6 relative"><label className="label-modern">Name of Item / Stock Code</label><div className="relative"><Search className="absolute left-3 top-3 w-4 h-4 text-indigo-400" /><input autoComplete="off" value={search} onChange={(e) => { setSearch(e.target.value); setSelectedProduct(null); }} placeholder="e.g. 600, PGVT, Statuario, TL-PGVT..." className="field-modern pl-10" />{search && <button onClick={() => { setSearch(''); setSelectedProduct(null); }} className="absolute right-3 top-3 text-slate-500"><X className="w-4 h-4" /></button></div>{search.trim().length >= 2 && <div className="absolute z-50 left-4 right-4 top-[76px] bg-slate-950 border border-indigo-500/60 rounded-2xl shadow-2xl overflow-hidden">{searching ? <div className="p-4 text-xs text-slate-500">Searching stock master...</div> : suggestions.length === 0 ? <div className="p-4 text-xs text-slate-500">No matching item.</div> : suggestions.map((p) => <button key={p.id} onClick={() => chooseProduct(p)} className="w-full text-left px-4 py-3 border-b border-slate-800 hover:bg-indigo-950/50 flex items-center justify-between gap-4"><div className="min-w-0"><div className="text-xs font-black text-white truncate">{p.name}</div><div className="text-[10px] font-mono text-indigo-300 mt-1">{p.sku} • {p.unit} {p.hsnCode ? `• HSN ${p.hsnCode}` : ''}</div></div><div className="text-right shrink-0"><b className="text-white text-sm">{currencySymbol}{p.sellingPrice.toFixed(2)}</b><span className={`block text-[10px] ${p.stock <= p.reorderLevel ? 'text-amber-400' : 'text-emerald-400'}`}>{p.stock} {p.unit} available</span></div></button>)}</div>}</div>
+          <div className="md:col-span-6 relative">
+  <label className="label-modern">Name of Item / Stock Code</label>
+
+  <div className="relative">
+    <Search className="absolute left-3 top-3 w-4 h-4 text-indigo-400" />
+
+    <input
+      autoComplete="off"
+      value={search}
+      onChange={(e) => {
+        setSearch(e.target.value);
+        setSelectedProduct(null);
+      }}
+      placeholder="e.g. 600, PGVT, Statuario, TL-PGVT..."
+      className="field-modern pl-10"
+    />
+
+    {search && (
+      <button
+        onClick={() => {
+          setSearch('');
+          setSelectedProduct(null);
+        }}
+        className="absolute right-3 top-3 text-slate-500"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    )}
+  </div>
+
+  {search.trim().length >= 2 && (
+    <div className="absolute z-50 left-4 right-4 top-[76px] bg-slate-950 border border-indigo-500/60 rounded-2xl shadow-2xl overflow-hidden">
+      {searching ? (
+        <div className="p-4 text-xs text-slate-500">
+          Searching stock master...
+        </div>
+      ) : suggestions.length === 0 ? (
+        <div className="p-4 text-xs text-slate-500">
+          No matching item.
+        </div>
+      ) : (
+        suggestions.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => chooseProduct(p)}
+            className="w-full text-left px-4 py-3 border-b border-slate-800 hover:bg-indigo-950/50 flex items-center justify-between gap-4"
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-black text-white truncate">
+                {p.name}
+              </div>
+              <div className="text-[10px] font-mono text-indigo-300 mt-1">
+                {p.sku} • {p.unit}
+                {p.hsnCode ? ` • HSN ${p.hsnCode}` : ''}
+              </div>
+            </div>
+
+            <div className="text-right shrink-0">
+              <b className="text-white text-sm">
+                {currencySymbol}
+                {p.sellingPrice.toFixed(2)}
+              </b>
+              <span
+                className={`block text-[10px] ${
+                  p.stock <= p.reorderLevel
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
+                }`}
+              >
+                {p.stock} {p.unit} available
+              </span>
+            </div>
+          </button>
+        ))
+      )}
+    </div>
+  )}
+          </div>
           <div><label className="label-modern">Quantity</label><input type="number" min="0.01" step="0.01" value={qty} onChange={(e) => setQty(Math.max(0.01, Number(e.target.value) || 0.01))} className="field-modern text-center font-black" /></div>
           <div><label className="label-modern">Unit</label><select value={unit} onChange={(e) => setUnit(e.target.value as TileQtyUnit)} className="field-modern"><option value="box">Box</option><option value="pcs">Nos</option></select></div>
           <div className="md:col-span-2"><label className="label-modern">Rate</label><div className="field-modern flex items-center bg-slate-950 text-white font-black">{currencySymbol}{selectedProduct ? getUnitPrice(selectedProduct, unit).toFixed(2) : '0.00'} <span className="ml-2 text-[10px] text-slate-500">/ {unit}</span></div></div>
