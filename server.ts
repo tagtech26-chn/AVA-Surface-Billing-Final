@@ -47,30 +47,33 @@ const entityDefaults: Record<string, unknown> = {
 
 const allowedEntities = new Set(Object.keys(entityDefaults));
 
-// Transitional API bridge: product business data is owned by ASP.NET Core + MSSQL.
-// The existing Express/Vite process remains the UI host, but never persists products itself.
-app.use("/api/salespersons", async (req, res, next) => {
-  try {
-    const query = req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : "";
-    const targetUrl = `${DOTNET_API_URL}/api/salespersons${query}`;
-    const upstream = await fetch(targetUrl, { method: req.method });
-    const responseText = await upstream.text();
-    res.status(upstream.status);
-    const upstreamContentType = upstream.headers.get("content-type");
-    if (upstreamContentType) res.set("content-type", upstreamContentType);
-    return res.send(responseText);
-  } catch (error) {
-    console.error("ASP.NET salesperson API proxy failed:", error);
-    return next(error);
-  }
-});
+// The React/Vite process is the browser-facing host on port 3000. All
+// transactional/authenticated APIs are owned by ASP.NET Core + MSSQL.
+// Forward the browser Authorization header so role-protected workflow APIs
+// behave identically through the frontend host and directly on port 5080.
+const ASPNET_PROXY_PREFIXES = [
+  "/api/auth",
+  "/api/invoice-workflow",
+  "/api/invoices",
+  "/api/customers",
+  "/api/companies",
+  "/api/products",
+  "/api/salespersons",
+  "/api/gst-verification"
+];
 
-app.use("/api/products", async (req, res, next) => {
+app.use(ASPNET_PROXY_PREFIXES, async (req, res, next) => {
   try {
-    const targetUrl = `${DOTNET_API_URL}/api/products${req.path === "/" ? "" : req.path}`;
+    const targetUrl = `${DOTNET_API_URL}${req.originalUrl}`;
     const headers: Record<string, string> = {};
+
+    const authorization = req.get("authorization");
     const contentType = req.get("content-type");
+    const accept = req.get("accept");
+
+    if (authorization) headers.authorization = authorization;
     if (contentType) headers["content-type"] = contentType;
+    if (accept) headers.accept = accept;
 
     const hasBody = !["GET", "HEAD"].includes(req.method);
     const upstream = await fetch(targetUrl, {
@@ -81,11 +84,13 @@ app.use("/api/products", async (req, res, next) => {
 
     const responseText = await upstream.text();
     res.status(upstream.status);
+
     const upstreamContentType = upstream.headers.get("content-type");
     if (upstreamContentType) res.set("content-type", upstreamContentType);
+
     return res.send(responseText);
   } catch (error) {
-    console.error("ASP.NET product API proxy failed:", error);
+    console.error(`ASP.NET API proxy failed for ${req.method} ${req.originalUrl}:`, error);
     return next(error);
   }
 });
