@@ -8,7 +8,8 @@ import {
   BusinessStoreDetails,
   StockAdjustment,
   DraftBill,
-  AuditLog
+  AuditLog,
+  ManagerDiscountApproval
 } from '../types';
 import {
   INITIAL_PRODUCTS,
@@ -32,7 +33,8 @@ const KEYS = {
   STORE_DETAILS: 'bizflow_store_details_v1',
   STOCK_LOGS: 'bizflow_stock_logs_v1',
   DRAFTS: 'bizflow_drafts_v1',
-  AUDIT_LOGS: 'bizflow_audit_logs_v1'
+  AUDIT_LOGS: 'bizflow_audit_logs_v1',
+  MANAGER_DISCOUNT_APPROVALS: 'bizflow_manager_discount_approvals_v1'
 };
 
 function getStorageItem<T>(key: string, defaultValue: T): T {
@@ -151,8 +153,6 @@ export async function hydrateProductsFromServer(): Promise<void> {
   if (!token) return;
 
   try {
-    // Keep only a small working set in browser storage. Inventory Catalog and
-    // fast search use the server-side APIs and therefore scale independently.
     const response = await fetch('/api/products?page=1&pageSize=100');
     if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
 
@@ -232,7 +232,16 @@ export const Storage = {
   saveStockLogs(logs: StockAdjustment[]): void { setStorageItem(KEYS.STOCK_LOGS, logs); },
   getDrafts(): DraftBill[] { return getStorageItem<DraftBill[]>(KEYS.DRAFTS, []); },
   saveDrafts(drafts: DraftBill[]): void { setStorageItem(KEYS.DRAFTS, drafts); },
-  getAuditLogs(): AuditLog[] { return getStorageItem<AuditLog[]>(KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS); },
+  getManagerDiscountApprovals(): ManagerDiscountApproval[] {
+    return getStorageItem<ManagerDiscountApproval[]>(KEYS.MANAGER_DISCOUNT_APPROVALS, []);
+  },
+  saveManagerDiscountApprovals(requests: ManagerDiscountApproval[]): void {
+    setStorageItem(KEYS.MANAGER_DISCOUNT_APPROVALS, requests);
+  },
+  getPendingManagerDiscountApprovals(): ManagerDiscountApproval[] {
+    return getStorageItem<ManagerDiscountApproval[]>(KEYS.MANAGER_DISCOUNT_APPROVALS, [])
+      .filter((request) => request.status === 'PENDING');
+  },
   saveAuditLogs(logs: AuditLog[]): void { setStorageItem(KEYS.AUDIT_LOGS, logs); },
   resetToDefaultSeed(): void {
     Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
