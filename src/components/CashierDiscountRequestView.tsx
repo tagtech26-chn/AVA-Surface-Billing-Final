@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Percent, Send, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Percent, Send, RefreshCw, AlertCircle } from 'lucide-react';
 import { UserProfile } from '../types';
 import { formatCurrency, formatDateTime } from '../lib/utils';
 
@@ -19,6 +19,14 @@ interface Props {
   currencySymbol: string;
 }
 
+const authHeaders = (json = false): HeadersInit => {
+  const token = localStorage.getItem('avasurface_auth_token');
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
+};
+
 export const CashierDiscountRequestView: React.FC<Props> = ({ activeUser, currencySymbol }) => {
   const [invoices, setInvoices] = useState<CandidateInvoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +37,7 @@ export const CashierDiscountRequestView: React.FC<Props> = ({ activeUser, curren
   const load = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/invoice-workflow/cashier-discount-candidates');
+      const response = await fetch('/api/invoice-workflow/cashier-discount-candidates', { headers: authHeaders() });
       if (!response.ok) throw new Error(await response.text());
       setInvoices(await response.json());
     } catch (error) {
@@ -47,7 +55,7 @@ export const CashierDiscountRequestView: React.FC<Props> = ({ activeUser, curren
     if (!selected) return;
     const response = await fetch(`/api/invoice-workflow/${selected.id}/request-manager-discount`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(true),
       body: JSON.stringify({ requestedByName: activeUser.name, remarks: remarks.trim() || null })
     });
 
