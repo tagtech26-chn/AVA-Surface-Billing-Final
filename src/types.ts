@@ -246,12 +246,37 @@ export type AuditSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface AuditLog {
   id: string;
+  timestamp: string;
   category: AuditCategory;
   severity: AuditSeverity;
   action: string;
-  entityType: string;
-  entityId?: string;
   performedBy: string;
-  performedAt: string;
-  details?: string;
+  performedByRole: UserRole;
+  targetId?: string;
+  targetName?: string;
+  details: string;
+  previousValue?: string;
+  newValue?: string;
+  ipAddress?: string;
+}
+
+export interface TallyLedgerMapping {
+  salesLedger: string;
+  cashLedger: string;
+  bankLedger: string;
+  cgstLedger: string;
+  sgstLedger: string;
+  igstLedger: string;
+  debtorsGroup: string;
+  companyName: string;
+}
+
+export interface AIInsightResponse {
+  insight: string;
+  recommendations: string[];
+  promoIdea?: {
+    code: string;
+    discount: string;
+    description: string;
+  };
 }
