@@ -1,1 +1,14 @@
 @import "tailwindcss";
+
+/*
+ * Billing/POS build intentionally does not use product image selection or
+ * product imagery. Product.imageUrl remains part of the shared product model
+ * so the future e-commerce frontend can provide image selection/display.
+ */
+.aspect-video:has(> img[src*="images.unsplash.com"]) {
+  display: none;
+}
+
+img[src*="images.unsplash.com"] {
+  display: none;
+}

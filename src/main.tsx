@@ -2,9 +2,10 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { LoginView } from './components/LoginView';
-import { Storage } from './lib/storage';
+import { Storage, hydrateProductsFromServer } from './lib/storage';
 import { UserProfile } from './types';
 import './index.css';
+import './modern-pos.css';
 
 const AUTH_TOKEN_KEY = 'avasurface_auth_token';
 const AUTH_USER_KEY = 'avasurface_auth_user';
@@ -52,15 +53,25 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     if (!user) return;
+
     const users = Storage.getUsers();
     const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
     Storage.saveUsers(nextUsers);
     Storage.saveActiveUserId(user.id);
+    void hydrateProductsFromServer();
   }, [user]);
 
   if (!user) {
     return <LoginView onLogin={setUser} />;
   }
+
+  // App reads its active user synchronously during initialization. Persist the
+  // authenticated backend identity before mounting it so a stale seeded user
+  // can never appear after a successful login.
+  const users = Storage.getUsers();
+  const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
+  Storage.saveUsers(nextUsers);
+  Storage.saveActiveUserId(user.id);
 
   return <App />;
 }

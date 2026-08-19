@@ -67,10 +67,17 @@ type ServerProduct = {
   isActive: boolean;
 };
 
-type ProductApiResponse = ServerProduct[] | { value?: ServerProduct[]; count?: number; Count?: number };
+type ProductApiResponse = ServerProduct[] | {
+  value?: ServerProduct[];
+  items?: ServerProduct[];
+  count?: number;
+  totalCount?: number;
+  Count?: number;
+};
 
 function normalizeProductResponse(payload: ProductApiResponse): ServerProduct[] {
   if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.items)) return payload.items;
   if (payload && Array.isArray(payload.value)) return payload.value;
   return [];
 }
@@ -119,12 +126,8 @@ function mergeServerProducts(serverProducts: ServerProduct[]): Product[] {
 async function createMissingSeedProducts(serverProducts: ServerProduct[]): Promise<ServerProduct[]> {
   const existingSkus = new Set(serverProducts.map((p) => p.sku.trim().toUpperCase()));
   const missing = INITIAL_PRODUCTS.filter((p) => !existingSkus.has(p.sku.trim().toUpperCase()));
-
   if (missing.length === 0) return serverProducts;
 
-  // Reconcile all missing SKUs in one request. The ASP.NET sync endpoint matches
-  // by SKU and only changes the products included in this payload, so existing
-  // SQL stock/pricing is not touched during startup hydration.
   const response = await fetch('/api/products/sync', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -141,11 +144,16 @@ async function createMissingSeedProducts(serverProducts: ServerProduct[]): Promi
 
 let productServerAvailable = false;
 
-async function hydrateProductsFromServer(): Promise<void> {
+export async function hydrateProductsFromServer(): Promise<void> {
   if (typeof window === 'undefined') return;
 
+  const token = localStorage.getItem('avasurface_auth_token');
+  if (!token) return;
+
   try {
-    const response = await fetch('/api/products');
+    // Keep only a small working set in browser storage. Inventory Catalog and
+    // fast search use the server-side APIs and therefore scale independently.
+    const response = await fetch('/api/products?page=1&pageSize=100');
     if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
 
     const payload = await response.json() as ProductApiResponse;
@@ -157,24 +165,23 @@ async function hydrateProductsFromServer(): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(productPayload(INITIAL_PRODUCTS))
       });
-
       if (!syncResponse.ok) {
         const details = await syncResponse.text().catch(() => '');
         throw new Error(`Product migration HTTP ${syncResponse.status}${details ? `: ${details}` : ''}`);
       }
 
-      serverProducts = normalizeProductResponse(await syncResponse.json() as ProductApiResponse);
+      const pageResponse = await fetch('/api/products?page=1&pageSize=100');
+      if (!pageResponse.ok) throw new Error(`Product catalogue HTTP ${pageResponse.status}`);
+      serverProducts = normalizeProductResponse(await pageResponse.json() as ProductApiResponse);
     } else {
       serverProducts = await createMissingSeedProducts(serverProducts);
     }
 
-    if (serverProducts.length === 0) {
-      throw new Error('Product migration returned an empty catalog.');
-    }
+    if (serverProducts.length === 0) throw new Error('Product migration returned an empty catalog.');
 
     setStorageItem(KEYS.PRODUCTS, mergeServerProducts(serverProducts));
     productServerAvailable = true;
-    console.info(`SQL Server product catalog ready: ${serverProducts.length} products.`);
+    console.info(`SQL Server product working set ready: ${serverProducts.length} products.`);
   } catch (error) {
     productServerAvailable = false;
     console.warn('Product API unavailable; retaining existing local product cache.', error);
@@ -183,7 +190,6 @@ async function hydrateProductsFromServer(): Promise<void> {
 
 function syncProducts(products: Product[]): void {
   if (!productServerAvailable) return;
-
   void fetch('/api/products/sync', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -197,41 +203,39 @@ function syncProducts(products: Product[]): void {
 export const Storage = {
   getProducts(): Product[] { return getStorageItem<Product[]>(KEYS.PRODUCTS, INITIAL_PRODUCTS); },
   saveProducts(products: Product[]): void { setStorageItem(KEYS.PRODUCTS, products); syncProducts(products); },
-
   getCustomers(): Customer[] { return getStorageItem<Customer[]>(KEYS.CUSTOMERS, INITIAL_CUSTOMERS); },
   saveCustomers(customers: Customer[]): void { setStorageItem(KEYS.CUSTOMERS, customers); },
-
   getPromos(): PromoRule[] { return getStorageItem<PromoRule[]>(KEYS.PROMOS, INITIAL_PROMOS); },
   savePromos(promos: PromoRule[]): void { setStorageItem(KEYS.PROMOS, promos); },
-
   getInvoices(): Invoice[] { return getStorageItem<Invoice[]>(KEYS.INVOICES, INITIAL_INVOICES); },
   saveInvoices(invoices: Invoice[]): void { setStorageItem(KEYS.INVOICES, invoices); },
-
   getExpenses(): Expense[] { return getStorageItem<Expense[]>(KEYS.EXPENSES, INITIAL_EXPENSES); },
   saveExpenses(expenses: Expense[]): void { setStorageItem(KEYS.EXPENSES, expenses); },
-
   getUsers(): UserProfile[] { return getStorageItem<UserProfile[]>(KEYS.USERS, INITIAL_USERS); },
   saveUsers(users: UserProfile[]): void { setStorageItem(KEYS.USERS, users); },
-
-  getActiveUserId(): string { return getStorageItem<string>(KEYS.ACTIVE_USER_ID, INITIAL_USERS[0].id); },
+  getActiveUserId(): string {
+    try {
+      const authenticated = localStorage.getItem('avasurface_auth_user');
+      if (authenticated) {
+        const user = JSON.parse(authenticated) as Partial<UserProfile>;
+        if (user.id) return user.id;
+      }
+    } catch {
+      // Fall back to the persisted UI session below.
+    }
+    return getStorageItem<string>(KEYS.ACTIVE_USER_ID, INITIAL_USERS[0].id);
+  },
   saveActiveUserId(id: string): void { setStorageItem(KEYS.ACTIVE_USER_ID, id); },
-
   getStoreDetails(): BusinessStoreDetails { return getStorageItem<BusinessStoreDetails>(KEYS.STORE_DETAILS, INITIAL_STORE_DETAILS); },
   saveStoreDetails(details: BusinessStoreDetails): void { setStorageItem(KEYS.STORE_DETAILS, details); },
-
   getStockLogs(): StockAdjustment[] { return getStorageItem<StockAdjustment[]>(KEYS.STOCK_LOGS, []); },
   saveStockLogs(logs: StockAdjustment[]): void { setStorageItem(KEYS.STOCK_LOGS, logs); },
-
   getDrafts(): DraftBill[] { return getStorageItem<DraftBill[]>(KEYS.DRAFTS, []); },
   saveDrafts(drafts: DraftBill[]): void { setStorageItem(KEYS.DRAFTS, drafts); },
-
   getAuditLogs(): AuditLog[] { return getStorageItem<AuditLog[]>(KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS); },
   saveAuditLogs(logs: AuditLog[]): void { setStorageItem(KEYS.AUDIT_LOGS, logs); },
-
   resetToDefaultSeed(): void {
     Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
     void hydrateProductsFromServer();
   }
 };
-
-void hydrateProductsFromServer();
