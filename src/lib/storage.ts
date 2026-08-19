@@ -138,8 +138,11 @@ async function createMissingSeedProducts(serverProducts: ServerProduct[]): Promi
 
 let productServerAvailable = false;
 
-async function hydrateProductsFromServer(): Promise<void> {
+export async function hydrateProductsFromServer(): Promise<void> {
   if (typeof window === 'undefined') return;
+
+  const token = localStorage.getItem('avasurface_auth_token');
+  if (!token) return;
 
   try {
     const response = await fetch('/api/products');
@@ -242,5 +245,3 @@ export const Storage = {
     void hydrateProductsFromServer();
   }
 };
-
-void hydrateProductsFromServer();
