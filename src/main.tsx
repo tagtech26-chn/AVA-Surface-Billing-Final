@@ -52,6 +52,7 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     if (!user) return;
+
     const users = Storage.getUsers();
     const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
     Storage.saveUsers(nextUsers);
@@ -61,6 +62,14 @@ function AuthenticatedApp() {
   if (!user) {
     return <LoginView onLogin={setUser} />;
   }
+
+  // App reads its active user synchronously during initialization. Persist the
+  // authenticated backend identity before mounting it so a stale seeded user
+  // can never appear after a successful login.
+  const users = Storage.getUsers();
+  const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
+  Storage.saveUsers(nextUsers);
+  Storage.saveActiveUserId(user.id);
 
   return <App />;
 }
