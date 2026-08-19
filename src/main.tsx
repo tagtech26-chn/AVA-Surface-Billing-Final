@@ -5,6 +5,7 @@ import { LoginView } from './components/LoginView';
 import { Storage, hydrateProductsFromServer } from './lib/storage';
 import { UserProfile } from './types';
 import './index.css';
+import './modern-pos.css';
 
 const AUTH_TOKEN_KEY = 'avasurface_auth_token';
 const AUTH_USER_KEY = 'avasurface_auth_user';
