@@ -242,7 +242,12 @@ export const Storage = {
     return getStorageItem<ManagerDiscountApproval[]>(KEYS.MANAGER_DISCOUNT_APPROVALS, [])
       .filter((request) => request.status === 'PENDING');
   },
-  saveAuditLogs(logs: AuditLog[]): void { setStorageItem(KEYS.AUDIT_LOGS, logs); },
+  getAuditLogs(): AuditLog[] {
+    return getStorageItem<AuditLog[]>(KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS);
+  },
+  saveAuditLogs(logs: AuditLog[]): void {
+    setStorageItem(KEYS.AUDIT_LOGS, logs);
+  },
   resetToDefaultSeed(): void {
     Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
     void hydrateProductsFromServer();
