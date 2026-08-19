@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, Barcode, Calculator, CheckCircle2, ChevronDown, Clock3, CreditCard,
-  FileText, PackageSearch, Plus, Receipt, RotateCcw, Save, Search, ShoppingCart,
-  Trash2, UserRound, WalletCards, X
+  CheckCircle2, Clock3, FileText, PackageSearch, Plus, Receipt, RotateCcw, Save, Search,
+  ShoppingCart, Trash2, UserRound, WalletCards, X
 } from 'lucide-react';
-import { Customer, Invoice, PaymentMethod, Product, PromoRule, TileQtyUnit, UserProfile, BusinessStoreDetails, CartItem } from '../types';
+import { Customer, DraftBill, Invoice, PaymentMethod, Product, PromoRule, TileQtyUnit, UserProfile, BusinessStoreDetails, CartItem } from '../types';
 import { Storage } from '../lib/storage';
 import { generateId } from '../lib/utils';
 
@@ -20,20 +19,11 @@ interface Props {
 }
 
 type Salesperson = { id: string; code: string; name: string; mobile: string; isActive: boolean };
-
 type NewCustomer = { name: string; phone: string; address: string; city: string; state: string; stateCode: string; gstNumber: string };
-
 const emptyCustomer: NewCustomer = { name: '', phone: '', address: '', city: '', state: '', stateCode: '', gstNumber: '' };
 
 export const ModernPosBillingView: React.FC<Props> = ({
-  products,
-  customers,
-  promos,
-  activeUser,
-  storeDetails,
-  onCompleteInvoice,
-  onAddNewCustomer,
-  currencySymbol
+  products, customers, promos, activeUser, storeDetails, onCompleteInvoice, onAddNewCustomer, currencySymbol
 }) => {
   const [search, setSearch] = useState('');
   const [serverResults, setServerResults] = useState<Product[]>([]);
@@ -57,6 +47,8 @@ export const ModernPosBillingView: React.FC<Props> = ({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [showCustomerPanel, setShowCustomerPanel] = useState(false);
+  const [heldBills, setHeldBills] = useState<DraftBill[]>(() => Storage.getDrafts());
+  const [showHeldBills, setShowHeldBills] = useState(false);
 
   const activeSalesperson = useMemo(() => salespersons.find((s) => s.id === salespersonId), [salespersons, salespersonId]);
   const filteredCustomers = useMemo(() => {
@@ -134,19 +126,46 @@ export const ModernPosBillingView: React.FC<Props> = ({
     setSelectedProduct(product);
     setSearch(product.name);
     setQty(1);
-    setUnit('box');
+    // Respect the item's configured UOM. The cashier can explicitly change it when needed.
+    setUnit((product.unit as TileQtyUnit) || 'box');
   };
 
   const addProduct = () => {
     if (!selectedProduct || selectedProduct.stock <= 0) return;
-    const boxes = unit === 'pcs' ? Math.ceil(qty / (selectedProduct.pcsPerBox || 4)) : qty;
-    if (boxes <= 0 || boxes > selectedProduct.stock) { setMessage(`Only ${selectedProduct.stock} ${selectedProduct.unit} available.`); return; }
+
+    // Quantity is always kept in the UOM selected on the line. Do not silently
+    // convert pcs/nos into boxes: some products are legitimately priced and
+    // stocked per piece. Stock and amount therefore use the entered quantity.
+    const enteredQty = Math.max(1, Number(qty) || 1);
+    if (enteredQty > selectedProduct.stock) {
+      setMessage(`Only ${selectedProduct.stock} ${selectedProduct.unit} available.`);
+      return;
+    }
+
     setCart((current) => {
-      const existing = current.find((line) => line.product.id === selectedProduct.id);
-      if (existing) return current.map((line) => line.product.id === selectedProduct.id
-        ? { ...line, quantity: Math.min(selectedProduct.stock, line.quantity + boxes), inputQuantity: qty, selectedUnit: unit, totalPrice: Math.min(selectedProduct.stock, line.quantity + boxes) * line.finalUnitPrice }
-        : line);
-      return [...current, { product: selectedProduct, quantity: boxes, inputQuantity: qty, selectedUnit: unit, itemWeightKg: boxes * (selectedProduct.weightPerBoxKg || 25), discountAmount: 0, discountPercent: 0, finalUnitPrice: selectedProduct.sellingPrice, totalPrice: boxes * selectedProduct.sellingPrice }];
+      const existing = current.find((line) => line.product.id === selectedProduct.id && line.selectedUnit === unit);
+      if (existing) {
+        const nextQty = existing.quantity + enteredQty;
+        if (nextQty > selectedProduct.stock) {
+          setMessage(`Only ${selectedProduct.stock} ${unit} available for this item.`);
+          return current;
+        }
+        return current.map((line) => line === existing
+          ? { ...line, quantity: nextQty, inputQuantity: nextQty, selectedUnit: unit, totalPrice: nextQty * line.finalUnitPrice,
+              itemWeightKg: unit === 'box' ? nextQty * (selectedProduct.weightPerBoxKg || 25) : line.itemWeightKg }
+          : line);
+      }
+      return [...current, {
+        product: selectedProduct,
+        quantity: enteredQty,
+        inputQuantity: enteredQty,
+        selectedUnit: unit,
+        itemWeightKg: unit === 'box' ? enteredQty * (selectedProduct.weightPerBoxKg || 25) : undefined,
+        discountAmount: 0,
+        discountPercent: 0,
+        finalUnitPrice: selectedProduct.sellingPrice,
+        totalPrice: enteredQty * selectedProduct.sellingPrice
+      }];
     });
     setSelectedProduct(null); setSearch(''); setQty(1); setUnit('box'); setMessage('');
   };
@@ -155,7 +174,16 @@ export const ModernPosBillingView: React.FC<Props> = ({
     if (line.product.id !== id) return line;
     const nextQty = Math.max(1, Math.min(line.product.stock, Number(patch.quantity ?? line.quantity)));
     const nextDiscount = Math.max(0, Number(patch.discountPercent ?? line.discountPercent ?? 0));
-    return { ...line, ...patch, quantity: nextQty, discountPercent: nextDiscount, discountAmount: nextDiscount > 0 ? line.finalUnitPrice * nextDiscount / 100 : Number(patch.discountAmount ?? line.discountAmount), totalPrice: nextQty * line.finalUnitPrice };
+    return {
+      ...line,
+      ...patch,
+      quantity: nextQty,
+      inputQuantity: nextQty,
+      discountPercent: nextDiscount,
+      discountAmount: nextDiscount > 0 ? line.finalUnitPrice * nextDiscount / 100 : Number(patch.discountAmount ?? line.discountAmount),
+      totalPrice: nextQty * line.finalUnitPrice,
+      itemWeightKg: line.selectedUnit === 'box' ? nextQty * (line.product.weightPerBoxKg || 25) : line.itemWeightKg
+    };
   }));
 
   const selectCustomer = (value: string) => {
@@ -179,9 +207,39 @@ export const ModernPosBillingView: React.FC<Props> = ({
 
   const saveDraft = () => {
     if (!cart.length) { setMessage('Add at least one item before holding the bill.'); return; }
-    const draft = { id: generateId('draft'), createdAt: new Date().toISOString(), customer: customer || undefined, customerType, cartItems: cart, notes, savedBy: activeUser.name, totalAmount: grandTotal, totalWeightKg: totalWeight };
-    Storage.saveDrafts([draft, ...Storage.getDrafts()]);
-    setCart([]); setMessage('Bill placed on hold.');
+    const draft: DraftBill = {
+      id: generateId('draft'), createdAt: new Date().toISOString(), customer: customer || undefined, customerType,
+      cartItems: cart, notes, savedBy: activeUser.name, totalAmount: grandTotal, totalWeightKg: totalWeight
+    };
+    const next = [draft, ...Storage.getDrafts()];
+    Storage.saveDrafts(next);
+    setHeldBills(next);
+    setShowHeldBills(true);
+    setCart([]); setManualDiscount(0); setPromoCode(''); setCashTendered(''); setNotes('');
+    setMessage(`Bill placed on hold. ${next.length} bill${next.length === 1 ? '' : 's'} on hold.`);
+  };
+
+  const resumeDraft = (draft: DraftBill) => {
+    if (cart.length) {
+      setMessage('Clear or hold the current bill before resuming another held bill.');
+      return;
+    }
+    setCart(draft.cartItems || []);
+    setCustomer(draft.customer || null);
+    setCustomerType(draft.customerType || 'NORMAL');
+    setNotes(draft.notes || '');
+    const next = heldBills.filter((d) => d.id !== draft.id);
+    Storage.saveDrafts(next);
+    setHeldBills(next);
+    setShowHeldBills(false);
+    setMessage('Held bill restored. Review the items and save when ready.');
+  };
+
+  const deleteDraft = (draftId: string) => {
+    const next = heldBills.filter((d) => d.id !== draftId);
+    Storage.saveDrafts(next);
+    setHeldBills(next);
+    setMessage('Held bill removed.');
   };
 
   const submit = async () => {
@@ -232,16 +290,26 @@ export const ModernPosBillingView: React.FC<Props> = ({
           <div className="md:col-span-6 relative"><label className="label-modern">Name of Item / Stock Code</label><div className="relative"><Search className="absolute left-3 top-3 w-4 h-4 text-indigo-400" /><input autoComplete="off" value={search} onChange={(e) => { setSearch(e.target.value); setSelectedProduct(null); }} placeholder="e.g. 600, PGVT, Statuario, TL-PGVT..." className="field-modern pl-10" />{search && <button onClick={() => { setSearch(''); setSelectedProduct(null); }} className="absolute right-3 top-3 text-slate-500"><X className="w-4 h-4" /></button>}</div>{search.trim().length >= 2 && <div className="absolute z-50 left-4 right-4 top-[76px] bg-slate-950 border border-indigo-500/60 rounded-2xl shadow-2xl overflow-hidden">{searching ? <div className="p-4 text-xs text-slate-500">Searching stock master...</div> : suggestions.length === 0 ? <div className="p-4 text-xs text-slate-500">No matching item.</div> : suggestions.map((p) => <button key={p.id} onClick={() => chooseProduct(p)} className="w-full text-left px-4 py-3 border-b border-slate-800 hover:bg-indigo-950/50 flex items-center justify-between gap-4"><div className="min-w-0"><div className="text-xs font-black text-white truncate">{p.name}</div><div className="text-[10px] font-mono text-indigo-300 mt-1">{p.sku} • {p.unit} {p.hsnCode ? `• HSN ${p.hsnCode}` : ''}</div></div><div className="text-right shrink-0"><b className="text-white text-sm">{currencySymbol}{p.sellingPrice.toFixed(2)}</b><span className={`block text-[10px] ${p.stock <= p.reorderLevel ? 'text-amber-400' : 'text-emerald-400'}`}>{p.stock} {p.unit} available</span></div></button>)}</div>}</div>
           <div><label className="label-modern">Quantity</label><input type="number" min="1" value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} className="field-modern text-center font-black" /></div>
           <div><label className="label-modern">Unit</label><select value={unit} onChange={(e) => setUnit(e.target.value as TileQtyUnit)} className="field-modern"><option value="box">Box</option><option value="pcs">Nos</option></select></div>
-          <div className="md:col-span-2"><label className="label-modern">Rate</label><div className="field-modern flex items-center bg-slate-950 text-white font-black">{currencySymbol}{selectedProduct?.sellingPrice.toFixed(2) || '0.00'}</div></div>
+          <div className="md:col-span-2"><label className="label-modern">Rate</label><div className="field-modern flex items-center bg-slate-950 text-white font-black">{currencySymbol}{selectedProduct?.sellingPrice.toFixed(2) || '0.00'} <span className="ml-2 text-[10px] text-slate-500">/ {unit}</span></div></div>
           <button disabled={!selectedProduct} onClick={addProduct} className="h-10 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-xs font-black flex items-center justify-center gap-2"><Plus className="w-4 h-4" /> Add</button>
         </div>
-        {selectedProduct && <div className="mx-4 mb-4 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 flex flex-wrap items-center gap-4 text-[11px]"><span className="font-black text-indigo-300">{selectedProduct.name}</span><span className="text-slate-500">Stock: {selectedProduct.stock}</span><span className="text-slate-500">Tax: {selectedProduct.taxRate}%</span><span className="text-slate-500">HSN: {selectedProduct.hsnCode || '—'}</span></div>}
+        {selectedProduct && <div className="mx-4 mb-4 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 flex flex-wrap items-center gap-4 text-[11px]"><span className="font-black text-indigo-300">{selectedProduct.name}</span><span className="text-slate-500">Stock: {selectedProduct.stock} {unit}</span><span className="text-slate-500">Tax: {selectedProduct.taxRate}%</span><span className="text-slate-500">HSN: {selectedProduct.hsnCode || '—'}</span></div>}
       </div>
 
       <div className="rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl overflow-hidden">
-        <div className="px-4 py-3 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between"><div className="flex items-center gap-2"><ShoppingCart className="w-4 h-4 text-indigo-400" /><span className="text-sm font-black text-white">Current Bill</span><span className="px-2 py-0.5 rounded-lg bg-indigo-600/15 text-indigo-300 text-[10px] font-black">{cart.length} ITEMS</span></div><button onClick={resetBill} className="text-[10px] font-black text-slate-500 hover:text-rose-300 flex items-center gap-1"><RotateCcw className="w-3 h-3" /> Clear</button></div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead className="bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="p-3">Code</th><th className="p-3">Name of Item</th><th className="p-3">Stock</th><th className="p-3">Qty</th><th className="p-3">Unit</th><th className="p-3 text-right">Rate</th><th className="p-3 text-right">Discount %</th><th className="p-3 text-right">Amount</th><th className="p-3"></th></tr></thead><tbody className="divide-y divide-slate-800">{cart.length === 0 ? <tr><td colSpan={9} className="p-12 text-center text-slate-600"><FileText className="w-8 h-8 mx-auto mb-2" /><p className="text-sm font-bold">No items entered</p><p className="text-xs mt-1">Type an item code or description above to begin.</p></td></tr> : cart.map((line) => <tr key={line.product.id} className="hover:bg-slate-800/30"><td className="p-3 font-mono text-xs text-indigo-300">{line.product.sku}</td><td className="p-3"><div className="text-xs font-black text-white">{line.product.name}</div><div className="text-[10px] text-slate-500">{line.product.tileDimensions || line.product.hsnCode || 'Stock item'}</div></td><td className="p-3 text-xs"><span className={line.product.stock <= line.product.reorderLevel ? 'text-amber-400' : 'text-emerald-400'}>{line.product.stock}</span></td><td className="p-3"><input type="number" min="1" max={line.product.stock} value={line.quantity} onChange={(e) => updateLine(line.product.id, { quantity: Number(e.target.value) })} className="w-20 field-modern text-center" /></td><td className="p-3 text-xs text-slate-400">{line.selectedUnit || line.product.unit}</td><td className="p-3 text-right text-xs font-black text-white">{currencySymbol}{line.finalUnitPrice.toFixed(2)}</td><td className="p-3 text-right"><input type="number" min="0" max="100" value={line.discountPercent || 0} onChange={(e) => updateLine(line.product.id, { discountPercent: Number(e.target.value) })} className="w-20 field-modern text-right" /></td><td className="p-3 text-right text-sm font-black text-white">{currencySymbol}{(line.totalPrice - line.discountAmount * line.quantity).toFixed(2)}</td><td className="p-3 text-right"><button onClick={() => setCart((c) => c.filter((x) => x.product.id !== line.product.id))} className="p-2 rounded-lg text-slate-500 hover:bg-rose-950 hover:text-rose-300"><Trash2 className="w-4 h-4" /></button></td></tr>)}</tbody></table></div>
+        <div className="px-4 py-3 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2"><ShoppingCart className="w-4 h-4 text-indigo-400" /><span className="text-sm font-black text-white">Current Bill</span><span className="px-2 py-0.5 rounded-lg bg-indigo-600/15 text-indigo-300 text-[10px] font-black">{cart.length} ITEMS</span></div>
+          <div className="flex items-center gap-2"><button onClick={() => { setHeldBills(Storage.getDrafts()); setShowHeldBills(true); }} className="text-[11px] font-black text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 flex items-center gap-2"><Clock3 className="w-4 h-4" /> On Hold ({heldBills.length})</button><button onClick={resetBill} className="text-[10px] font-black text-slate-500 hover:text-rose-300 flex items-center gap-1"><RotateCcw className="w-3 h-3" /> Clear</button></div>
+        </div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead className="bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="p-3">Code</th><th className="p-3">Name of Item</th><th className="p-3">Stock</th><th className="p-3">Qty</th><th className="p-3">Unit</th><th className="p-3 text-right">Rate</th><th className="p-3 text-right">Discount %</th><th className="p-3 text-right">Amount</th><th className="p-3"></th></tr></thead><tbody className="divide-y divide-slate-800">{cart.length === 0 ? <tr><td colSpan={9} className="p-12 text-center text-slate-600"><FileText className="w-8 h-8 mx-auto mb-2" /><p className="text-sm font-bold">No items entered</p><p className="text-xs mt-1">Type an item code or description above to begin.</p></td></tr> : cart.map((line) => <tr key={`${line.product.id}-${line.selectedUnit || line.product.unit}`} className="hover:bg-slate-800/30"><td className="p-3 font-mono text-xs text-indigo-300">{line.product.sku}</td><td className="p-3"><div className="text-xs font-black text-white">{line.product.name}</div><div className="text-[10px] text-slate-500">{line.product.tileDimensions || line.product.hsnCode || 'Stock item'}</div></td><td className="p-3 text-xs"><span className={line.product.stock <= line.product.reorderLevel ? 'text-amber-400' : 'text-emerald-400'}>{line.product.stock} {line.selectedUnit || line.product.unit}</span></td><td className="p-3"><input type="number" min="1" max={line.product.stock} value={line.quantity} onChange={(e) => updateLine(line.product.id, { quantity: Number(e.target.value) })} className="w-20 field-modern text-center" /></td><td className="p-3 text-xs text-slate-400 font-black">{line.selectedUnit || line.product.unit}</td><td className="p-3 text-right text-xs font-black text-white">{currencySymbol}{line.finalUnitPrice.toFixed(2)} <span className="text-[10px] text-slate-500">/ {line.selectedUnit || line.product.unit}</span></td><td className="p-3 text-right"><input type="number" min="0" max="100" value={line.discountPercent || 0} onChange={(e) => updateLine(line.product.id, { discountPercent: Number(e.target.value) })} className="w-20 field-modern text-right" /></td><td className="p-3 text-right text-sm font-black text-white">{currencySymbol}{(line.totalPrice - line.discountAmount * line.quantity).toFixed(2)}</td><td className="p-3 text-right"><button onClick={() => setCart((c) => c.filter((x) => x.product.id !== line.product.id || x.selectedUnit !== line.selectedUnit))} className="p-2 rounded-lg text-slate-500 hover:bg-rose-950 hover:text-rose-300"><Trash2 className="w-4 h-4" /></button></td></tr>)}</tbody></table></div>
       </div>
+
+      {showHeldBills && <div className="fixed inset-0 z-[80] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowHeldBills(false)}>
+        <div className="w-full max-w-3xl max-h-[80vh] overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between"><div><p className="text-[10px] uppercase tracking-widest text-amber-400 font-black">Held Transactions</p><h2 className="text-lg font-black text-white">Bills on Hold ({heldBills.length})</h2></div><button onClick={() => setShowHeldBills(false)} className="p-2 text-slate-400 hover:text-white"><X className="w-5 h-5" /></button></div>
+          <div className="max-h-[60vh] overflow-y-auto p-4 space-y-2">{heldBills.length === 0 ? <div className="py-12 text-center text-slate-500"><Clock3 className="w-8 h-8 mx-auto mb-2" /><p className="font-bold">No bills are currently on hold.</p></div> : heldBills.map((draft) => <div key={draft.id} className="rounded-xl border border-slate-700 bg-slate-950/70 p-4 flex flex-col md:flex-row md:items-center justify-between gap-3"><div><div className="flex items-center gap-2"><span className="font-black text-white">{draft.customer?.name || 'Walk-in customer'}</span><span className="text-[10px] text-slate-500">{new Date(draft.createdAt).toLocaleString()}</span></div><div className="text-xs text-slate-400 mt-1">{draft.cartItems?.length || 0} item line(s) • {currencySymbol}{draft.totalAmount.toFixed(2)} • by {draft.savedBy}</div>{draft.notes && <div className="text-[10px] text-slate-500 mt-1 truncate max-w-xl">{draft.notes}</div>}</div><div className="flex items-center gap-2 shrink-0"><button onClick={() => resumeDraft(draft)} className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black">Resume</button><button onClick={() => deleteDraft(draft.id)} className="px-4 py-2 rounded-lg bg-rose-950/60 border border-rose-500/30 text-rose-300 text-xs font-black">Delete</button></div></div>)}</div>
+        </div>
+      </div>}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 rounded-2xl border border-slate-700 bg-slate-900 p-4 space-y-3">
