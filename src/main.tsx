@@ -33,6 +33,11 @@ function installAuthenticatedFetch() {
     const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
     headers.set('Authorization', `Bearer ${token}`);
 
+    // Keep this outside the try/catch so it is also available to the network-error path.
+    const isManagerDecision = url.includes('/api/manager/invoices/') && url.endsWith('/decision');
+    const isPaymentConfirmation = url.includes('/api/accounts/invoices/') && url.endsWith('/confirm-payment');
+    const isWorkflowWrite = method !== 'GET' && (isManagerDecision || isPaymentConfirmation);
+
     try {
       const response = await originalFetch(input, { ...init, headers });
 
@@ -44,10 +49,6 @@ function installAuthenticatedFetch() {
 
       // Give workflow operations an unavoidable browser popup. This makes backend
       // validation/database failures visible even when the component is scrolled.
-      const isManagerDecision = url.includes('/api/manager/invoices/') && url.endsWith('/decision');
-      const isPaymentConfirmation = url.includes('/api/accounts/invoices/') && url.endsWith('/confirm-payment');
-      const isWorkflowWrite = method !== 'GET' && (isManagerDecision || isPaymentConfirmation);
-
       if (isWorkflowWrite && !response.ok) {
         let detail = `HTTP ${response.status}`;
         try {
@@ -100,35 +101,26 @@ function AuthenticatedApp() {
       setHydrating(false);
       return;
     }
-
-    let cancelled = false;
-    const hydrate = async () => {
-      const users = Storage.getUsers();
-      Storage.saveUsers([user, ...users.filter(existing => existing.id !== user.id)]);
-      Storage.saveActiveUserId(user.id);
-      await Promise.allSettled([
-        hydrateProductsFromServer(),
-        hydrateInvoicesFromServer()
-      ]);
-      if (!cancelled) setHydrating(false);
-    };
-
-    void hydrate();
-    return () => { cancelled = true; };
+    let active = true;
+    (async () => {
+      try {
+        await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer()]);
+      } finally {
+        if (active) setHydrating(false);
+      }
+    })();
+    return () => { active = false; };
   }, [user]);
 
-  if (!user) return <LoginView onLogin={setUser} />;
-  if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center text-sm font-semibold">Loading billing data...</div>;
-
-  const users = Storage.getUsers();
-  const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
-  Storage.saveUsers(nextUsers);
-  Storage.saveActiveUserId(user.id);
-  return <App />;
+  if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading BizFlow...</div>;
+  if (!user) return <LoginView onLogin={(profile) => {
+    setUser(profile);
+  }} />;
+  return <App activeUser={user} onLogout={() => { clearAuth(); setUser(null); }} />;
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthenticatedApp />
-  </StrictMode>,
+  </StrictMode>
 );
