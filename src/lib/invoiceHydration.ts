@@ -28,39 +28,24 @@ type ServerInvoice = {
   paymentMethodRequested?: string;
   paymentMethodConfirmed?: string;
   paymentConfirmedAtUtc?: string;
-  customer?: {
-    id: string;
-    name?: string;
-    phone?: string;
-    email?: string;
-    gstin?: string;
-    billingAddress?: string;
-    shippingAddress?: string;
-    city?: string;
-    state?: string;
-    stateCode?: string;
-  };
+  customer?: { id: string; name?: string; phone?: string; email?: string; gstin?: string; billingAddress?: string; shippingAddress?: string; city?: string; state?: string; stateCode?: string };
   salesperson?: { id: string; name?: string; mobile?: string };
-  lines?: Array<{
-    id: string;
-    productId: string;
-    quantity: number;
-    unitPrice: number;
-    discountPercent: number;
-    discountAmount: number;
-    taxableAmount: number;
-    cgstAmount: number;
-    sgstAmount: number;
-    igstAmount: number;
-    lineTotal: number;
-    product?: { id: string; sku?: string; name?: string; unit?: string; hsnCode?: string; sellingPrice?: number; gstRate?: number; stock?: number; reorderLevel?: number };
-  }>;
+  lines?: Array<{ id: string; productId: string; quantity: number; unitPrice: number; discountPercent: number; discountAmount: number; taxableAmount: number; cgstAmount: number; sgstAmount: number; igstAmount: number; lineTotal: number; product?: { id: string; sku?: string; name?: string; unit?: string; hsnCode?: string; sellingPrice?: number; gstRate?: number; stock?: number; reorderLevel?: number } }>;
   payments?: Array<{ id: string; amount: number; method: string; reference?: string; paymentDateUtc?: string }>;
 };
+
+type InvoiceApiResponse = ServerInvoice[] | { items?: ServerInvoice[]; value?: ServerInvoice[]; count?: number; totalCount?: number };
 
 function number(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeServerInvoices(payload: InvoiceApiResponse): ServerInvoice[] {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.value)) return payload.value;
+  return [];
 }
 
 function mapCustomer(customer?: ServerInvoice['customer']): Customer | undefined {
@@ -100,7 +85,6 @@ function mapLine(line: NonNullable<ServerInvoice['lines']>[number]): CartItem {
     hsnCode: serverProduct?.hsnCode,
     updatedAt: new Date().toISOString()
   };
-
   return {
     product,
     quantity: number(line.quantity),
@@ -121,12 +105,10 @@ function mapInvoice(source: ServerInvoice): Invoice {
     referenceNumber: payment.reference,
     date: payment.paymentDateUtc || new Date().toISOString()
   }));
-
   const amountPaid = payments.reduce((sum, payment) => sum + payment.amount, 0);
   const status = source.status === 'PAID' || source.workflowStatus === 'PAYMENT_CONFIRMED' || source.workflowStatus === 'COMPLETED'
     ? 'PAID'
     : amountPaid > 0 ? 'PARTIAL' : 'UNPAID';
-
   return {
     id: source.id,
     invoiceNumber: source.invoiceNumber,
@@ -159,18 +141,41 @@ function mapInvoice(source: ServerInvoice): Invoice {
   };
 }
 
-export async function hydrateInvoicesFromServer(): Promise<void> {
-  if (typeof window === 'undefined') return;
-  if (!sessionStorage.getItem(AUTH_TOKEN_KEY)) return;
+export async function hydrateInvoicesFromServer(): Promise<Invoice[]> {
+  if (typeof window === 'undefined') return [];
+  const localInvoices = (() => {
+    try {
+      const raw = localStorage.getItem(INVOICE_STORAGE_KEY);
+      return raw ? JSON.parse(raw) as Invoice[] : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  if (!sessionStorage.getItem(AUTH_TOKEN_KEY)) return localInvoices;
 
   try {
     const response = await fetch('/api/invoices');
     if (!response.ok) throw new Error(`Invoice API HTTP ${response.status}`);
-    const serverInvoices = await response.json() as ServerInvoice[];
-    const invoices = Array.isArray(serverInvoices) ? serverInvoices.map(mapInvoice) : [];
+    const payload = await response.json() as InvoiceApiResponse;
+    const serverInvoices = normalizeServerInvoices(payload).map(mapInvoice);
+
+    // Never discard invoices already present in the browser. Backend invoices win
+    // for the same ID, while older locally persisted invoices are retained.
+    const merged = new Map<string, Invoice>();
+    for (const invoice of localInvoices) merged.set(invoice.id || invoice.invoiceNumber, invoice);
+    for (const invoice of serverInvoices) merged.set(invoice.id || invoice.invoiceNumber, invoice);
+
+    const invoices = Array.from(merged.values()).sort((a, b) => {
+      const aTime = Date.parse(a.date || '') || 0;
+      const bTime = Date.parse(b.date || '') || 0;
+      return bTime - aTime;
+    });
     localStorage.setItem(INVOICE_STORAGE_KEY, JSON.stringify(invoices));
-    console.info(`SQL Server invoice history ready: ${invoices.length} invoices.`);
+    console.info(`SQL Server invoice history ready: ${serverInvoices.length} server + ${localInvoices.length} local = ${invoices.length} visible invoices.`);
+    return invoices;
   } catch (error) {
     console.warn('Invoice history API unavailable; retaining existing local invoice cache.', error);
+    return localInvoices;
   }
 }
