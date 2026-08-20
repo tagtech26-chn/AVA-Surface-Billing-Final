@@ -35,8 +35,6 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({ invoices, onSelectIn
     } finally { setRefreshing(false); }
   };
 
-  // Payment is confirmed by Accounts in the backend. Keep this history screen synchronized
-  // without requiring the user to sign out, reload the browser, or revisit the invoice.
   useEffect(() => {
     void refreshFromServer();
     const timer = window.setInterval(() => { void refreshFromServer(); }, 5000);
@@ -62,7 +60,18 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({ invoices, onSelectIn
     });
   }, [liveInvoices, mode, search, status]);
 
-  const selected = liveInvoices.find((invoice) => invoice.id === selectedId) || null;
+  // Always show the first invoice on the right when the list has data.
+  // If the current selection is filtered out or disappears after refresh, select the new first invoice.
+  useEffect(() => {
+    if (visibleInvoices.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+    const currentIsVisible = selectedId ? visibleInvoices.some((invoice) => invoice.id === selectedId) : false;
+    if (!currentIsVisible) setSelectedId(visibleInvoices[0].id);
+  }, [visibleInvoices, selectedId]);
+
+  const selected = visibleInvoices.find((invoice) => invoice.id === selectedId) || visibleInvoices[0] || null;
 
   const statusBadge = (value: InvoiceStatus) => {
     if (value === 'PAID') return <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-[10px] font-black"><CheckCircle2 className="w-3 h-3" />PAID</span>;
