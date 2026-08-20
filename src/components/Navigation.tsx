@@ -16,7 +16,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab,
     ...(isAccounts ? [{ id: 'accounts', label: 'Accounts Payment', shortLabel: 'Accounts', icon: CreditCard, action: 'CONFIRM_PAYMENTS' as const, badge: unpaidInvoiceCount ? String(unpaidInvoiceCount) : null, badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' }] : []),
     { id: userRole === 'WAREHOUSE' ? 'accounts' : 'warehouse', label: userRole === 'WAREHOUSE' ? 'Warehouse Loading & Completion' : 'Warehouse & Logistics', shortLabel: 'Dispatch', icon: Truck, action: 'MANAGE_WAREHOUSE' as const, badge: pendingDispatchCount ? String(pendingDispatchCount) : null, badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
     { id: 'promos', label: 'Promos & Offers', shortLabel: 'Promos', icon: Tag, action: 'MANAGE_PROMOS' as const, badge: activePromoCount ? String(activePromoCount) : null, badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
-    { id: 'invoices', label: 'Invoices & AR', shortLabel: 'Bills', icon: Receipt, action: 'VIEW_ALL_INVOICES' as const, badge: unpaidInvoiceCount ? String(unpaidInvoiceCount) : null, badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
+    ...(!isManager && !isAccounts ? [{ id: 'invoices', label: 'Invoices & AR', shortLabel: 'Bills', icon: Receipt, action: 'VIEW_ALL_INVOICES' as const, badge: unpaidInvoiceCount ? String(unpaidInvoiceCount) : null, badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40' }] : []),
     { id: 'eway', label: 'e-Way & e-Invoicing', shortLabel: 'e-Way', icon: ShieldCheck, action: 'MANAGE_EWAY_INVOICE' as const, badge: null },
     { id: 'tally', label: 'Tally ERP Bridge', shortLabel: 'Tally', icon: FileSpreadsheet, action: 'EXPORT_TALLY' as const, badge: null },
     { id: 'reports', label: 'Financial Reports', shortLabel: 'Reports', icon: BarChart3, action: 'VIEW_FINANCIAL_REPORTS' as const, badge: null },
@@ -25,15 +25,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab,
   ];
   const visibleItems = navItems.filter(item => canPerformAction(userRole, item.action));
   const toggleCollapse = () => setIsCollapsed(prev => { const next = !prev; localStorage.setItem('bizflow_nav_collapsed', String(next)); return next; });
-  const roleDescription: Record<UserRole, string> = {
-    ADMIN: 'System administration and oversight.',
-    MANAGER: 'Review all invoices, manage additional discounts and credit notes before payment.',
-    BRANCH_MANAGER: 'Review branch invoices, manage additional discounts and credit notes before payment.',
-    CASHIER: 'Billing POS and invoice creation. Payment is collected by Accounts.',
-    BILLING_USER: 'Billing POS and invoice creation. Payment is collected by Accounts.',
-    ACCOUNTANT: 'Accounts payment collection and financial reconciliation.',
-    WAREHOUSE: 'Warehouse loading and completion after Accounts confirms payment.'
-  };
+  const roleDescription: Record<UserRole, string> = { ADMIN: 'System administration and oversight.', MANAGER: 'Review all invoices, manage additional discounts and credit notes before payment.', BRANCH_MANAGER: 'Review branch invoices, manage additional discounts and credit notes before payment.', CASHIER: 'Billing POS and invoice creation. Payment is collected by Accounts.', BILLING_USER: 'Billing POS and invoice creation. Payment is collected by Accounts.', ACCOUNTANT: 'Accounts payment collection and financial reconciliation.', WAREHOUSE: 'Warehouse loading and completion after Accounts confirms payment.' };
   return <>
     <aside className={`hidden md:flex flex-col bg-slate-900 border-r border-slate-800 p-3 shrink-0 space-y-4 min-h-[calc(100vh-4rem)] transition-all ${isCollapsed ? 'w-20' : 'w-64'}`}>
       <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between px-2'} pt-1 pb-2 border-b border-slate-800/80`}>{!isCollapsed && <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{userRole} MENU</p>}<button onClick={toggleCollapse} className="p-2 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700/80">{isCollapsed ? <PanelLeftOpen className="w-4 h-4 text-indigo-400" /> : <PanelLeftClose className="w-4 h-4 text-slate-400" />}</button></div>
