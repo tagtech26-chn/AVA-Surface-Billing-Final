@@ -1,17 +1,34 @@
 import { UserRole } from '../types';
 
+const INDIA_TIME_ZONE = 'Asia/Kolkata';
+
 export function formatCurrency(amount: number, symbol = '$'): string {
   return `${symbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function formatDate(dateString: string): string {
-  try { return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
-  catch { return dateString; }
+  try {
+    return new Date(dateString).toLocaleDateString('en-IN', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: INDIA_TIME_ZONE
+    });
+  } catch { return dateString; }
 }
 
 export function formatDateTime(dateString: string): string {
-  try { return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
-  catch { return dateString; }
+  try {
+    return new Date(dateString).toLocaleString('en-IN', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: INDIA_TIME_ZONE
+    });
+  } catch { return dateString; }
 }
 
 export function generateInvoiceNumber(existingCount: number): string {
