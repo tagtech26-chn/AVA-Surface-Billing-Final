@@ -17,7 +17,7 @@ export interface ManagerDiscountApproval { id: string; invoiceId: string; invoic
 export interface DraftBill { id: string; createdAt: string; customer?: Customer; customerType: 'NORMAL' | 'LEDGER'; gstInput?: string; gstData?: any; cartItems: CartItem[]; notes?: string; savedBy: string; totalAmount: number; totalWeightKg: number; }
 
 export interface Invoice {
-  id: string; invoiceNumber: string; date: string; dueDate?: string; customer?: Customer; cashierName: string; cashierRole: UserRole; salespersonName?: string; salespersonMobile?: string; items: CartItem[]; subtotal: number; itemDiscountsTotal: number; promoCodeApplied?: string; promoDiscountPercent?: number; promoDiscountAmount: number; branchManagerDiscountPercent?: number; branchManagerDiscountAmount?: number; branchManagerRemarks?: string; branchManagerUserId?: string; manualDiscountAmount: number; taxTotal: number; cgstAmount?: number; sgstAmount?: number; igstAmount?: number; roundOffAmount?: number; grandTotal: number; amountPaid: number; changeGiven: number; status: InvoiceStatus; paymentMethod: PaymentMethod; paymentsHistory: PaymentRecord[];
+  id: string; invoiceNumber: string; quotationNumber?: string; date: string; dueDate?: string; customer?: Customer; cashierName: string; cashierRole: UserRole; salespersonName?: string; salespersonMobile?: string; items: CartItem[]; subtotal: number; itemDiscountsTotal: number; promoCodeApplied?: string; promoDiscountPercent?: number; promoDiscountAmount: number; branchManagerDiscountPercent?: number; branchManagerDiscountAmount?: number; branchManagerRemarks?: string; branchManagerUserId?: string; manualDiscountAmount: number; taxTotal: number; cgstAmount?: number; sgstAmount?: number; igstAmount?: number; roundOffAmount?: number; grandTotal: number; amountPaid: number; changeGiven: number; status: InvoiceStatus; paymentMethod: PaymentMethod; paymentsHistory: PaymentRecord[];
   workflowStatus?: string;
   creditNoteAmount?: number;
   creditNoteReason?: string;
@@ -27,7 +27,7 @@ export interface Invoice {
   notes?: string; deliveryStatus?: DeliveryStatus; dispatchDate?: string; driverName?: string; driverPhone?: string; vehicleNumber?: string; trackingNumber?: string; transporterName?: string; deliveryNotes?: string; ewayBillNo?: string; ewayBillDate?: string; ewayValidUntil?: string; irnNo?: string; ackNo?: string; ackDate?: string; distanceKm?: number;
 }
 export type ExpenseCategory = 'RENT' | 'UTILITIES' | 'SUPPLIER_PAYMENT' | 'SALARIES' | 'MARKETING' | 'EQUIPMENT' | 'OTHER';
-export interface Expense { id: string; title: string; category: ExpenseCategory; amount: number; date: string; paidTo: string; paymentMethod: PaymentMethod; recordedBy: string; receiptNumber?: string; notes?: string; }
+export interface Expense { id: string; title: string; category: ExpenseCategory; amount: number; date: string; paidTo: string; recordedBy: string; receiptNumber?: string; notes?: string; }
 export interface BusinessStoreDetails { name: string; tagline: string; address: string; phone: string; email: string; taxRegistrationNumber: string; currencySymbol: string; receiptHeader: string; receiptFooter: string; upiId?: string; pan?: string; cin?: string; }
 export type AuditCategory = 'PRODUCT' | 'INVOICE' | 'USER' | 'PROMO' | 'STOCK' | 'SYSTEM';
 export type AuditSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
