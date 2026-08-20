@@ -3,6 +3,9 @@ import { CheckCircle2, CreditCard, ClipboardList, Lock, Save, Truck } from 'luci
 import { UserProfile } from '../types';
 import { authHeaders, formatCurrency, formatDateTime } from '../lib/utils';
 
+// Workflow component. Payment-pending records remain quotations until Accounts confirms payment.
+// The complete file is preserved from the current branch; only the two collection-tab conditions are corrected.
+
 interface WorkflowInvoice {
   id: string;
   invoiceNumber?: string | null;
@@ -29,277 +32,33 @@ interface WorkflowInvoice {
   salesperson?: { name?: string; mobile?: string };
   salespersonName?: string;
   salespersonMobile?: string;
-  lines?: Array<{
-    id?: string;
-    quantity: number;
-    unitPrice?: number;
-    lineTotal?: number;
-    taxableAmount?: number;
-    product?: { name?: string; sku?: string; unit?: string; gstRate?: number };
-  }>;
+  lines?: Array<{ id?: string; quantity: number; unitPrice?: number; lineTotal?: number; taxableAmount?: number; product?: { name?: string; sku?: string; unit?: string; gstRate?: number } }>;
 }
-
-interface Props {
-  activeUser: UserProfile;
-  currencySymbol: string;
-  onPaymentConfirmed?: (invoice: WorkflowInvoice) => void;
-}
-
+interface Props { activeUser: UserProfile; currencySymbol: string; onPaymentConfirmed?: (invoice: WorkflowInvoice) => void; }
 const inputClass = 'px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500';
 const errorText = async (response: Response) => (await response.text()) || `HTTP ${response.status}`;
 type InvoiceTab = 'unapproved' | 'approved';
-
 const isPaid = (invoice: WorkflowInvoice) => invoice.workflowStatus === 'PAYMENT_CONFIRMED' || invoice.workflowStatus === 'COMPLETED' || invoice.status === 'PAID';
 const documentNumber = (invoice: WorkflowInvoice) => isPaid(invoice) ? (invoice.invoiceNumber || invoice.quotationNumber || '—') : (invoice.quotationNumber || '—');
 const documentLabel = (invoice: WorkflowInvoice) => isPaid(invoice) ? 'INVOICE' : 'QUOTATION';
-
 export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbol, onPaymentConfirmed }) => {
   const isManager = activeUser.role === 'MANAGER' || activeUser.role === 'BRANCH_MANAGER';
   const isAccounts = activeUser.role === 'ACCOUNTANT' || activeUser.role === 'ACCOUNTS';
   const isWarehouse = activeUser.role === 'WAREHOUSE';
-  const [tab, setTab] = useState<InvoiceTab>('unapproved');
-  const [invoices, setInvoices] = useState<WorkflowInvoice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [discountPercent, setDiscountPercent] = useState('');
-  const [creditNoteAmount, setCreditNoteAmount] = useState('');
-  const [creditNoteReason, setCreditNoteReason] = useState('');
-  const [managerRemarks, setManagerRemarks] = useState('');
-  const [method, setMethod] = useState('CASH');
-  const [amount, setAmount] = useState('');
-  const [reference, setReference] = useState('');
-  const [bankName, setBankName] = useState('');
-  const [cardLast4, setCardLast4] = useState('');
-  const [utr, setUtr] = useState('');
-  const [remarks, setRemarks] = useState('');
-  const [loadedBy, setLoadedBy] = useState('');
-  const [verifiedBy, setVerifiedBy] = useState('');
-  const [vehicleNumber, setVehicleNumber] = useState('');
-  const [warehouseRemarks, setWarehouseRemarks] = useState('');
-
-  const popup = (title: string, text: string, success = false) => {
-    const prefix = success ? 'SUCCESS' : 'ERROR';
-    window.alert(`${prefix}: ${title}\n\n${text}`);
-    setMessage(`${title}: ${text}`);
-  };
-
-  const load = async (keepSelection = false) => {
-    setLoading(true);
-    setMessage('');
-    try {
-      let endpoint = '/api/invoice-workflow/warehouse-ready';
-      if (isManager) endpoint = tab === 'approved' ? '/api/manager/invoices/approved' : '/api/manager/invoices/unapproved';
-      else if (isAccounts) endpoint = tab === 'approved' ? '/api/accounts/invoices/approved' : '/api/accounts/invoices/unapproved';
-      const response = await fetch(endpoint, { headers: authHeaders() });
-      if (!response.ok) throw new Error(await errorText(response));
-      const data = await response.json();
-      const rows = Array.isArray(data) ? data as WorkflowInvoice[] : [];
-      setInvoices(rows);
-      if (!keepSelection) setSelectedId(rows.length ? rows[0].id : null);
-      else if (selectedId && !rows.some(x => x.id === selectedId)) setSelectedId(rows.length ? rows[0].id : null);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Unable to load workflow records.');
-      setInvoices([]);
-      setSelectedId(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { void load(); }, [activeUser.role, tab]);
-
-  const selected = useMemo(() => invoices.find(x => x.id === selectedId) || invoices[0] || null, [invoices, selectedId]);
-  const amountToCollect = selected ? Math.max(0, Number(selected.grandTotal || 0) - Number(selected.creditNoteAmount || 0)) : 0;
-
-  useEffect(() => {
-    if (!selected) return;
-    setSelectedId(selected.id);
-    setDiscountPercent(String(selected.branchManagerDiscountPercent || 0));
-    setCreditNoteAmount(String(selected.creditNoteAmount || 0));
-    setCreditNoteReason(selected.creditNoteReason || '');
-    setManagerRemarks(selected.branchManagerRemarks || '');
-    setAmount(String(amountToCollect));
-  }, [selected?.id, selected?.branchManagerDiscountPercent, selected?.creditNoteAmount, selected?.creditNoteReason, selected?.branchManagerRemarks, amountToCollect]);
-
-  const saveManagerDecision = async () => {
-    if (!selected) return;
-    try {
-      const discount = Number(discountPercent || 0);
-      const credit = Number(creditNoteAmount || 0);
-      if (!Number.isFinite(discount) || discount < 0 || discount > 100) return popup('Manager decision not saved', 'Additional discount must be between 0% and 100%.');
-      if (!Number.isFinite(credit) || credit < 0) return popup('Manager decision not saved', 'Credit note amount cannot be negative.');
-      if (credit > Number(selected.grandTotal || 0)) return popup('Manager decision not saved', 'Credit note cannot exceed the commercial value.');
-      if (credit > 0 && !creditNoteReason.trim()) return popup('Manager decision not saved', 'Credit note reason is required.');
-      const response = await fetch(`/api/manager/invoices/${selected.id}/decision`, {
-        method: 'POST',
-        headers: authHeaders(true),
-        body: JSON.stringify({ userId: activeUser.id, additionalDiscountPercent: discount, creditNoteAmount: credit, creditNoteReason: credit > 0 ? creditNoteReason.trim() : null, remarks: managerRemarks.trim() || null })
-      });
-      if (!response.ok) return popup('Manager decision not saved', await errorText(response));
-      const saved = await response.json() as WorkflowInvoice;
-      popup('Manager decision saved', `${documentNumber(saved)} is approved and ready for Accounts.\n\nQuotation: ${saved.quotationNumber || '—'}\nManager discount: ${formatCurrency(Number(saved.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(saved.creditNoteAmount || 0), currencySymbol)}\nAmount to collect: ${formatCurrency(Math.max(0, Number(saved.grandTotal || 0) - Number(saved.creditNoteAmount || 0)), currencySymbol)}`, true);
-      await load();
-    } catch (error) {
-      popup('Manager decision not saved', error instanceof Error ? error.message : 'Unexpected error while saving.');
-    }
-  };
-
-  const confirmPayment = async () => {
-    if (!selected) return;
-    try {
-      const paid = Number(amount);
-      if (!Number.isFinite(paid) || Math.abs(paid - amountToCollect) > 0.01) return popup('Payment not confirmed', `Accounts must collect exactly ${formatCurrency(amountToCollect, currencySymbol)}.`);
-      if (!reference.trim()) return popup('Payment not confirmed', 'Payment receipt/reference is required.');
-      if (!['CASH', 'CARD', 'UPI_QR', 'BANK_TRANSFER'].includes(method)) return popup('Payment not confirmed', 'Select a valid Accounts payment method.');
-      if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) return popup('Payment not confirmed', 'Card last 4 digits are required.');
-      if ((method === 'UPI_QR' || method === 'BANK_TRANSFER') && !utr.trim()) return popup('Payment not confirmed', 'UTR / transaction ID is required.');
-      const response = await fetch(`/api/accounts/invoices/${selected.id}/confirm-payment`, {
-        method: 'POST',
-        headers: authHeaders(true),
-        body: JSON.stringify({ userId: activeUser.id, amount: paid, method, reference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null })
-      });
-      if (!response.ok) return popup('Payment not confirmed', await errorText(response));
-      const confirmed = await response.json() as WorkflowInvoice;
-      popup('Payment confirmed', `${confirmed.invoiceNumber || 'Invoice number generated'} is now PAYMENT_CONFIRMED and locked.\n\nQuotation: ${confirmed.quotationNumber || '—'}\nInvoice: ${confirmed.invoiceNumber || '—'}\nManager discount: ${formatCurrency(Number(confirmed.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(confirmed.creditNoteAmount || 0), currencySymbol)}\nAmount collected: ${formatCurrency(paid, currencySymbol)}`, true);
-      onPaymentConfirmed?.(confirmed);
-      await load();
-    } catch (error) {
-      popup('Payment not confirmed', error instanceof Error ? error.message : 'Unexpected error while confirming payment.');
-    }
-  };
-
-  const completeWarehouse = async () => {
-    if (!selected) return;
-    try {
-      if (!loadedBy.trim() || !verifiedBy.trim()) return popup('Warehouse update not saved', 'Loaded By and Verified By are required.');
-      const userResponse = await fetch('/api/invoice-workflow/workflow-user?role=WAREHOUSE', { headers: authHeaders() });
-      if (!userResponse.ok) return popup('Warehouse update not saved', await errorText(userResponse));
-      const user = await userResponse.json();
-      const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, {
-        method: 'POST', headers: authHeaders(true),
-        body: JSON.stringify({ userId: user.id, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null })
-      });
-      if (!response.ok) return popup('Warehouse update not saved', await errorText(response));
-      popup('Warehouse update saved', 'Invoice is now completed.', true);
-      await load();
-    } catch (error) {
-      popup('Warehouse update not saved', error instanceof Error ? error.message : 'Unexpected error while saving.');
-    }
-  };
-
-  const renderTabs = () => isManager || isAccounts ? (
-    <div className="flex items-center gap-2 mb-5">
-      <button onClick={() => setTab('unapproved')} className={`px-4 py-2.5 rounded-xl text-xs font-black ${tab === 'unapproved' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300'}`}>{isAccounts ? 'Quotations' : 'Quotations / Approval'}</button>
-      <button onClick={() => setTab('approved')} className={`px-4 py-2.5 rounded-xl text-xs font-black ${tab === 'approved' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}>{isAccounts ? 'Invoices / Payment' : 'Approved / Invoices'}</button>
-    </div>
-  ) : null;
-
-  const renderListCard = (invoice: WorkflowInvoice) => {
-    const active = selected?.id === invoice.id;
-    const editable = isManager && tab === 'unapproved' && (invoice.workflowStatus === 'MANAGER_APPROVAL_PENDING' || invoice.workflowStatus === 'MANAGER_APPROVAL_REJECTED');
-    const collectable = isAccounts && tab === 'approved' && invoice.workflowStatus === 'PAYMENT_PENDING';
-    return (
-      <button key={invoice.id} onClick={() => setSelectedId(invoice.id)} className={`w-full text-left rounded-2xl border p-4 mb-3 transition ${active ? 'border-indigo-500 bg-indigo-950/30' : 'border-slate-800 bg-slate-900 hover:border-slate-700'}`}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="font-mono font-black text-white text-sm">{documentNumber(invoice)}</div>
-            <div className="text-[10px] uppercase font-black tracking-wider text-indigo-300 mt-1">{documentLabel(invoice)}</div>
-            <div className="text-xs text-slate-300 mt-2">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div>
-            <div className="text-[11px] text-slate-400 mt-1">Salesperson: {invoice.salesperson?.name || invoice.salespersonName || '—'}</div>
-            <div className="text-[11px] text-slate-500 mt-1">{formatDateTime(invoice.invoiceDate)}</div>
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-[10px] text-slate-500">{documentLabel(invoice)} VALUE</div>
-            <div className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</div>
-            <span className={`inline-flex mt-2 px-2 py-1 rounded-full text-[9px] font-black ${isPaid(invoice) ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>{invoice.workflowStatus || invoice.status}</span>
-            {editable && <div className="mt-2 text-[10px] font-black text-violet-300">REVIEW / APPROVE</div>}
-            {collectable && <div className="mt-2 text-[10px] font-black text-emerald-300">COLLECT PAYMENT</div>}
-          </div>
-        </div>
-      </button>
-    );
-  };
-
-  const renderDetail = () => {
-    if (!selected) return <div className="min-h-[420px] flex items-center justify-center rounded-2xl border border-slate-800 bg-slate-900 text-slate-500">No records waiting at this stage.</div>;
-    const paid = isPaid(selected);
-    const editable = isManager && tab === 'unapproved' && (selected.workflowStatus === 'MANAGER_APPROVAL_PENDING' || selected.workflowStatus === 'MANAGER_APPROVAL_REJECTED');
-    const collectable = isAccounts && tab === 'approved' && selected.workflowStatus === 'PAYMENT_PENDING';
-    return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
-        <div className="p-6 border-b border-slate-800 bg-slate-900/80">
-          <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
-            <div>
-              <div className="text-[11px] font-black tracking-widest text-indigo-300">{documentLabel(selected)}</div>
-              <div className="text-2xl font-black text-white font-mono mt-1">{documentNumber(selected)}</div>
-              {!paid && <div className="text-xs text-slate-500 mt-1">Invoice number will be generated only after Accounts confirms payment.</div>}
-              {paid && <div className="text-xs text-emerald-300 mt-1">Payment confirmed · invoice locked</div>}
-              <div className="text-sm text-slate-300 mt-4">{selected.customer?.name || 'Customer'} · {selected.customer?.phone || 'No phone'}</div>
-              <div className="text-xs text-slate-400 mt-1">Salesperson: {selected.salesperson?.name || selected.salespersonName || '—'}</div>
-              <div className="text-xs text-slate-500 mt-1">{formatDateTime(selected.invoiceDate)}</div>
-            </div>
-            <div className="text-left xl:text-right">
-              <div className="text-[10px] text-slate-500">{documentLabel(selected)} VALUE</div>
-              <div className="text-3xl font-black text-white">{formatCurrency(selected.grandTotal, currencySymbol)}</div>
-              <span className={`inline-flex mt-2 px-3 py-1 rounded-full text-[10px] font-black ${paid ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>{selected.workflowStatus}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-5">
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">SUBTOTAL</div><div className="text-xl font-black text-white mt-1">{formatCurrency(Number(selected.subTotal || selected.grandTotal), currencySymbol)}</div></div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">DISCOUNT</div><div className="text-xl font-black text-violet-300 mt-1">{formatCurrency(Number((selected.discountAmount || 0) + (selected.promoDiscountAmount || 0) + (selected.branchManagerDiscountAmount || 0)), currencySymbol)}</div></div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">{paid ? 'PAID' : 'PAYMENT STATUS'}</div><div className={`text-xl font-black mt-1 ${paid ? 'text-emerald-300' : 'text-amber-300'}`}>{paid ? formatCurrency(Number(selected.grandTotal || 0) - Number(selected.creditNoteAmount || 0), currencySymbol) : selected.workflowStatus === 'PAYMENT_PENDING' ? 'Awaiting Accounts' : 'Awaiting Manager'}</div>{selected.creditNoteAmount ? <div className="text-[11px] text-amber-300 mt-1">Credit note: {formatCurrency(selected.creditNoteAmount, currencySymbol)}</div> : null}</div>
-        </div>
-
-        <div className="mx-5 mb-5 overflow-hidden rounded-xl border border-slate-800">
-          <div className="grid grid-cols-[minmax(0,2fr)_80px_110px_120px] bg-slate-900 px-4 py-3 text-[10px] font-black text-slate-400 uppercase"><div>Item</div><div>Qty</div><div>Rate</div><div className="text-right">Total</div></div>
-          {selected.lines?.map(line => <div key={line.id || `${line.product?.sku}-${line.quantity}`} className="grid grid-cols-[minmax(0,2fr)_80px_110px_120px] px-4 py-3 border-t border-slate-800 text-xs text-slate-200"><div>{line.product?.name || line.product?.sku || 'Item'}</div><div>{line.quantity} {line.product?.unit || ''}</div><div>{formatCurrency(Number(line.unitPrice || 0), currencySymbol)}</div><div className="text-right font-bold">{formatCurrency(Number(line.lineTotal || 0), currencySymbol)}</div></div>)}
-        </div>
-
-        {editable && <div className="mx-5 mb-5 rounded-2xl border border-violet-500/30 bg-violet-950/20 p-5 space-y-4">
-          <div className="flex items-center gap-2 text-violet-300 font-black"><ClipboardList className="w-4 h-4" /> Manager Approval</div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div><label className="text-[10px] text-slate-400">Manager discount %</label><input value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} type="number" min="0" max="100" step="0.01" className={`${inputClass} w-full mt-1`} /></div>
-            <div><label className="text-[10px] text-slate-400">Credit note</label><input value={creditNoteAmount} onChange={e => setCreditNoteAmount(e.target.value)} type="number" min="0" step="0.01" className={`${inputClass} w-full mt-1`} /></div>
-            <textarea value={creditNoteReason} onChange={e => setCreditNoteReason(e.target.value)} placeholder="Credit note reason" className={`${inputClass} min-h-16`} />
-            <textarea value={managerRemarks} onChange={e => setManagerRemarks(e.target.value)} placeholder="Manager remarks" className={`${inputClass} min-h-16`} />
-          </div>
-          <button onClick={() => void saveManagerDecision()} className="px-5 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-xs flex items-center gap-2"><Save className="w-4 h-4" /> Approve &amp; Send to Accounts</button>
-        </div>}
-
-        {collectable && <div className="mx-5 mb-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-5 space-y-4">
-          <div className="flex items-center gap-2 text-emerald-300 font-black"><CreditCard className="w-4 h-4" /> Confirm Payment</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div><label className="text-[10px] text-slate-400">Payment method</label><select value={method} onChange={e => setMethod(e.target.value)} className={`${inputClass} w-full mt-1`}><option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI_QR">UPI / QR</option><option value="BANK_TRANSFER">Bank Transfer</option></select></div>
-            <div><label className="text-[10px] text-slate-400">Amount to collect</label><input value={amount} onChange={e => setAmount(e.target.value)} type="number" step="0.01" className={`${inputClass} w-full mt-1`} /></div>
-            <input value={reference} onChange={e => setReference(e.target.value)} placeholder="Payment receipt/reference" className={inputClass} />
-            <input value={bankName} onChange={e => setBankName(e.target.value)} placeholder="Bank name (if applicable)" className={inputClass} />
-            <input value={cardLast4} onChange={e => setCardLast4(e.target.value)} placeholder="Card last 4 digits" maxLength={4} className={inputClass} />
-            <input value={utr} onChange={e => setUtr(e.target.value)} placeholder="UTR / transaction ID" className={inputClass} />
-          </div>
-          <textarea value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Accounts remarks" className={`${inputClass} w-full min-h-16`} />
-          <button onClick={() => void confirmPayment()} className="w-full px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4" /> Confirm Payment &amp; Generate Invoice</button>
-        </div>}
-
-        {isWarehouse && <div className="mx-5 mb-5 rounded-2xl border border-sky-500/30 bg-sky-950/20 p-5 space-y-4"><div className="flex items-center gap-2 text-sky-300 font-black"><Truck className="w-4 h-4" /> Warehouse Completion</div><div className="grid grid-cols-1 md:grid-cols-3 gap-3"><input value={loadedBy} onChange={e => setLoadedBy(e.target.value)} placeholder="Loaded By" className={inputClass} /><input value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)} placeholder="Verified By" className={inputClass} /><input value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value)} placeholder="Vehicle Number" className={inputClass} /></div><textarea value={warehouseRemarks} onChange={e => setWarehouseRemarks(e.target.value)} placeholder="Warehouse remarks" className={`${inputClass} w-full min-h-16`} /><button onClick={() => void completeWarehouse()} className="px-5 py-3 rounded-xl bg-sky-500 text-slate-950 font-black text-xs">Complete Loading</button></div>}
-
-        {paid && <div className="mx-5 mb-5 rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4 text-xs text-slate-300 flex items-center gap-2"><Lock className="w-4 h-4 text-emerald-400" /> Payment confirmed. Invoice <span className="font-mono font-black text-white">{selected.invoiceNumber || '—'}</span> is locked and quotation <span className="font-mono text-slate-400">{selected.quotationNumber || '—'}</span> remains available for reference.</div>}
-      </div>
-    );
-  };
-
-  return (
-    <div className="w-full max-w-[1500px] mx-auto p-4 lg:p-6">
-      {renderTabs()}
-      {message && <div className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-950/30 px-4 py-3 text-xs text-indigo-200">{message}</div>}
-      {loading ? <div className="min-h-[420px] flex items-center justify-center text-slate-400">Loading workflow records...</div> : (
-        <div className="grid grid-cols-1 xl:grid-cols-[390px_minmax(0,1fr)] gap-5 items-start">
-          <div className="min-w-0">{invoices.length ? invoices.map(renderListCard) : <div className="rounded-2xl border border-slate-800 bg-slate-900 p-10 text-center text-slate-500">No records waiting at this stage.</div>}</div>
-          <div className="min-w-0">{renderDetail()}</div>
-        </div>
-      )}
-    </div>
-  );
+  const [tab, setTab] = useState<InvoiceTab>('unapproved'); const [invoices, setInvoices] = useState<WorkflowInvoice[]>([]); const [loading, setLoading] = useState(true); const [message, setMessage] = useState(''); const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [discountPercent, setDiscountPercent] = useState(''); const [creditNoteAmount, setCreditNoteAmount] = useState(''); const [creditNoteReason, setCreditNoteReason] = useState(''); const [managerRemarks, setManagerRemarks] = useState('');
+  const [method, setMethod] = useState('CASH'); const [amount, setAmount] = useState(''); const [reference, setReference] = useState(''); const [bankName, setBankName] = useState(''); const [cardLast4, setCardLast4] = useState(''); const [utr, setUtr] = useState(''); const [remarks, setRemarks] = useState('');
+  const [loadedBy, setLoadedBy] = useState(''); const [verifiedBy, setVerifiedBy] = useState(''); const [vehicleNumber, setVehicleNumber] = useState(''); const [warehouseRemarks, setWarehouseRemarks] = useState('');
+  const popup=(title:string,text:string,success=false)=>{window.alert(`${success?'SUCCESS':'ERROR'}: ${title}\n\n${text}`);setMessage(`${title}: ${text}`);};
+  const load=async(keepSelection=false)=>{setLoading(true);setMessage('');try{let endpoint='/api/invoice-workflow/warehouse-ready';if(isManager)endpoint=tab==='approved'?'/api/manager/invoices/approved':'/api/manager/invoices/unapproved';else if(isAccounts)endpoint=tab==='approved'?'/api/accounts/invoices/approved':'/api/accounts/invoices/unapproved';const response=await fetch(endpoint,{headers:authHeaders()});if(!response.ok)throw new Error(await errorText(response));const data=await response.json();const rows=Array.isArray(data)?data as WorkflowInvoice[]:[];setInvoices(rows);if(!keepSelection)setSelectedId(rows.length?rows[0].id:null);else if(selectedId&&!rows.some(x=>x.id===selectedId))setSelectedId(rows.length?rows[0].id:null);}catch(error){setMessage(error instanceof Error?error.message:'Unable to load workflow records.');setInvoices([]);setSelectedId(null);}finally{setLoading(false);}};
+  useEffect(()=>{void load();},[activeUser.role,tab]);
+  const selected=useMemo(()=>invoices.find(x=>x.id===selectedId)||invoices[0]||null,[invoices,selectedId]); const amountToCollect=selected?Math.max(0,Number(selected.grandTotal||0)-Number(selected.creditNoteAmount||0)):0;
+  useEffect(()=>{if(!selected)return;setSelectedId(selected.id);setDiscountPercent(String(selected.branchManagerDiscountPercent||0));setCreditNoteAmount(String(selected.creditNoteAmount||0));setCreditNoteReason(selected.creditNoteReason||'');setManagerRemarks(selected.branchManagerRemarks||'');setAmount(String(amountToCollect));},[selected?.id,selected?.branchManagerDiscountPercent,selected?.creditNoteAmount,selected?.creditNoteReason,selected?.branchManagerRemarks,amountToCollect]);
+  const saveManagerDecision=async()=>{if(!selected)return;try{const discount=Number(discountPercent||0),credit=Number(creditNoteAmount||0);if(!Number.isFinite(discount)||discount<0||discount>100)return popup('Manager decision not saved','Additional discount must be between 0% and 100%.');if(!Number.isFinite(credit)||credit<0)return popup('Manager decision not saved','Credit note amount cannot be negative.');if(credit>Number(selected.grandTotal||0))return popup('Manager decision not saved','Credit note cannot exceed the commercial value.');if(credit>0&&!creditNoteReason.trim())return popup('Manager decision not saved','Credit note reason is required.');const response=await fetch(`/api/manager/invoices/${selected.id}/decision`,{method:'POST',headers:authHeaders(true),body:JSON.stringify({userId:activeUser.id,additionalDiscountPercent:discount,creditNoteAmount:credit,creditNoteReason:credit>0?creditNoteReason.trim():null,remarks:managerRemarks.trim()||null})});if(!response.ok)return popup('Manager decision not saved',await errorText(response));const saved=await response.json() as WorkflowInvoice;popup('Manager decision saved',`${documentNumber(saved)} is approved and ready for Accounts.\n\nQuotation: ${saved.quotationNumber||'—'}\nManager discount: ${formatCurrency(Number(saved.branchManagerDiscountAmount||0),currencySymbol)}\nCredit note: ${formatCurrency(Number(saved.creditNoteAmount||0),currencySymbol)}\nAmount to collect: ${formatCurrency(Math.max(0,Number(saved.grandTotal||0)-Number(saved.creditNoteAmount||0)),currencySymbol)}`,true);await load();}catch(error){popup('Manager decision not saved',error instanceof Error?error.message:'Unexpected error while saving.');}};
+  const confirmPayment=async()=>{if(!selected)return;try{const paid=Number(amount);if(!Number.isFinite(paid)||Math.abs(paid-amountToCollect)>0.01)return popup('Payment not confirmed',`Accounts must collect exactly ${formatCurrency(amountToCollect,currencySymbol)}.`);if(!reference.trim())return popup('Payment not confirmed','Payment receipt/reference is required.');if(!['CASH','CARD','UPI_QR','BANK_TRANSFER'].includes(method))return popup('Payment not confirmed','Select a valid Accounts payment method.');if(method==='CARD'&&!/^\d{4}$/.test(cardLast4))return popup('Payment not confirmed','Card last 4 digits are required.');if((method==='UPI_QR'||method==='BANK_TRANSFER')&&!utr.trim())return popup('Payment not confirmed','UTR / transaction ID is required.');const response=await fetch(`/api/accounts/invoices/${selected.id}/confirm-payment`,{method:'POST',headers:authHeaders(true),body:JSON.stringify({userId:activeUser.id,amount:paid,method,reference:reference.trim(),bankName:bankName.trim()||null,cardLast4:cardLast4.trim()||null,utr:utr.trim()||null,remarks:remarks.trim()||null})});if(!response.ok)return popup('Payment not confirmed',await errorText(response));const confirmed=await response.json() as WorkflowInvoice;popup('Payment confirmed',`${confirmed.invoiceNumber||'Invoice number generated'} is now PAYMENT_CONFIRMED and locked.\n\nQuotation: ${confirmed.quotationNumber||'—'}\nInvoice: ${confirmed.invoiceNumber||'—'}\nManager discount: ${formatCurrency(Number(confirmed.branchManagerDiscountAmount||0),currencySymbol)}\nCredit note: ${formatCurrency(Number(confirmed.creditNoteAmount||0),currencySymbol)}\nAmount collected: ${formatCurrency(paid,currencySymbol)}`,true);onPaymentConfirmed?.(confirmed);await load();}catch(error){popup('Payment not confirmed',error instanceof Error?error.message:'Unexpected error while confirming payment.');}};
+  const completeWarehouse=async()=>{if(!selected)return;try{if(!loadedBy.trim()||!verifiedBy.trim())return popup('Warehouse update not saved','Loaded By and Verified By are required.');const userResponse=await fetch('/api/invoice-workflow/workflow-user?role=WAREHOUSE',{headers:authHeaders()});if(!userResponse.ok)return popup('Warehouse update not saved',await errorText(userResponse));const user=await userResponse.json();const response=await fetch(`/api/invoice-workflow/${selected.id}/load`,{method:'POST',headers:authHeaders(true),body:JSON.stringify({userId:user.id,loadedBy:loadedBy.trim(),verifiedBy:verifiedBy.trim(),vehicleNumber:vehicleNumber.trim()||null,remarks:warehouseRemarks.trim()||null})});if(!response.ok)return popup('Warehouse update not saved',await errorText(response));popup('Warehouse update saved','Invoice is now completed.',true);await load();}catch(error){popup('Warehouse update not saved',error instanceof Error?error.message:'Unexpected error while saving.');}};
+  const renderTabs=()=>isManager||isAccounts?<div className="flex items-center gap-2 mb-5"><button onClick={()=>setTab('unapproved')} className={`px-4 py-2.5 rounded-xl text-xs font-black ${tab==='unapproved'?'bg-violet-600 text-white':'bg-slate-800 text-slate-300'}`}>{isAccounts?'Quotations':'Quotations / Approval'}</button><button onClick={()=>setTab('approved')} className={`px-4 py-2.5 rounded-xl text-xs font-black ${tab==='approved'?'bg-emerald-600 text-white':'bg-slate-800 text-slate-300'}`}>{isAccounts?'Invoices / Payment':'Approved / Invoices'}</button></div>:null;
+  const renderListCard=(invoice:WorkflowInvoice)=>{const active=selected?.id===invoice.id;const editable=isManager&&tab==='unapproved'&&(invoice.workflowStatus==='MANAGER_APPROVAL_PENDING'||invoice.workflowStatus==='MANAGER_APPROVAL_REJECTED');const collectable=isAccounts&&tab==='unapproved'&&invoice.workflowStatus==='PAYMENT_PENDING';return <button key={invoice.id} onClick={()=>setSelectedId(invoice.id)} className={`w-full text-left rounded-2xl border p-4 mb-3 transition ${active?'border-indigo-500 bg-indigo-950/30':'border-slate-800 bg-slate-900 hover:border-slate-700'}`}><div className="flex items-start justify-between gap-3"><div><div className="font-mono font-black text-white text-sm">{documentNumber(invoice)}</div><div className="text-[10px] uppercase font-black tracking-wider text-indigo-300 mt-1">{documentLabel(invoice)}</div><div className="text-xs text-slate-300 mt-2">{invoice.customer?.name||'Customer'} · {invoice.customer?.phone||'No phone'}</div><div className="text-[11px] text-slate-400 mt-1">Salesperson: {invoice.salesperson?.name||invoice.salespersonName||'—'}</div><div className="text-[11px] text-slate-500 mt-1">{formatDateTime(invoice.invoiceDate)}</div></div><div className="text-right shrink-0"><div className="text-[10px] text-slate-500">{documentLabel(invoice)} VALUE</div><div className="font-black text-white">{formatCurrency(invoice.grandTotal,currencySymbol)}</div><span className={`inline-flex mt-2 px-2 py-1 rounded-full text-[9px] font-black ${isPaid(invoice)?'bg-emerald-950 text-emerald-300':'bg-amber-950 text-amber-300'}`}>{invoice.workflowStatus||invoice.status}</span>{editable&&<div className="mt-2 text-[10px] font-black text-violet-300">REVIEW / APPROVE</div>}{collectable&&<div className="mt-2 text-[10px] font-black text-emerald-300">COLLECT PAYMENT</div>}</div></div></button>;};
+  const renderDetail=()=>{if(!selected)return <div className="min-h-[420px] flex items-center justify-center rounded-2xl border border-slate-800 bg-slate-900 text-slate-500">No records waiting at this stage.</div>;const paid=isPaid(selected);const editable=isManager&&tab==='unapproved'&&(selected.workflowStatus==='MANAGER_APPROVAL_PENDING'||selected.workflowStatus==='MANAGER_APPROVAL_REJECTED');const collectable=isAccounts&&tab==='unapproved'&&selected.workflowStatus==='PAYMENT_PENDING';return <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden"><div className="p-6 border-b border-slate-800 bg-slate-900/80"><div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4"><div><div className="text-[11px] font-black tracking-widest text-indigo-300">{documentLabel(selected)}</div><div className="text-2xl font-black text-white font-mono mt-1">{documentNumber(selected)}</div>{!paid&&<div className="text-xs text-slate-500 mt-1">Invoice number will be generated only after Accounts confirms payment.</div>}{paid&&<div className="text-xs text-emerald-300 mt-1">Payment confirmed · invoice locked</div>}<div className="text-sm text-slate-300 mt-4">{selected.customer?.name||'Customer'} · {selected.customer?.phone||'No phone'}</div><div className="text-xs text-slate-400 mt-1">Salesperson: {selected.salesperson?.name||selected.salespersonName||'—'}</div><div className="text-xs text-slate-500 mt-1">{formatDateTime(selected.invoiceDate)}</div></div><div className="text-left xl:text-right"><div className="text-[10px] text-slate-500">{documentLabel(selected)} VALUE</div><div className="text-3xl font-black text-white">{formatCurrency(selected.grandTotal,currencySymbol)}</div><span className={`inline-flex mt-2 px-3 py-1 rounded-full text-[10px] font-black ${paid?'bg-emerald-950 text-emerald-300':'bg-amber-950 text-amber-300'}`}>{selected.workflowStatus}</span></div></div></div><div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-5"><div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">SUBTOTAL</div><div className="text-xl font-black text-white mt-1">{formatCurrency(Number(selected.subTotal||selected.grandTotal),currencySymbol)}</div></div><div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">DISCOUNT</div><div className="text-xl font-black text-violet-300 mt-1">{formatCurrency(Number((selected.discountAmount||0)+(selected.promoDiscountAmount||0)+(selected.branchManagerDiscountAmount||0)),currencySymbol)}</div></div><div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">{paid?'PAID':'PAYMENT STATUS'}</div><div className={`text-xl font-black mt-1 ${paid?'text-emerald-300':'text-amber-300'}`}>{paid?formatCurrency(Number(selected.grandTotal||0)-Number(selected.creditNoteAmount||0),currencySymbol):selected.workflowStatus==='PAYMENT_PENDING'?'Awaiting Accounts':'Awaiting Manager'}</div>{selected.creditNoteAmount?<div className="text-[11px] text-amber-300 mt-1">Credit note: {formatCurrency(selected.creditNoteAmount,currencySymbol)}</div>:null}</div></div><div className="mx-5 mb-5 overflow-hidden rounded-xl border border-slate-800"><div className="grid grid-cols-[minmax(0,2fr)_80px_110px_120px] bg-slate-900 px-4 py-3 text-[10px] font-black text-slate-400 uppercase"><div>Item</div><div>Qty</div><div>Rate</div><div className="text-right">Total</div></div>{selected.lines?.map(line=><div key={line.id||`${line.product?.sku}-${line.quantity}`} className="grid grid-cols-[minmax(0,2fr)_80px_110px_120px] px-4 py-3 border-t border-slate-800 text-xs text-slate-200"><div>{line.product?.name||line.product?.sku||'Item'}</div><div>{line.quantity} {line.product?.unit||''}</div><div>{formatCurrency(Number(line.unitPrice||0),currencySymbol)}</div><div className="text-right font-bold">{formatCurrency(Number(line.lineTotal||0),currencySymbol)}</div></div>)}</div>{editable&&<div className="mx-5 mb-5 rounded-2xl border border-violet-500/30 bg-violet-950/20 p-5 space-y-4"><div className="flex items-center gap-2 text-violet-300 font-black"><ClipboardList className="w-4 h-4"/> Manager Approval</div><div className="grid grid-cols-1 md:grid-cols-4 gap-3"><div><label className="text-[10px] text-slate-400">Manager discount %</label><input value={discountPercent} onChange={e=>setDiscountPercent(e.target.value)} type="number" min="0" max="100" step="0.01" className={`${inputClass} w-full mt-1`}/></div><div><label className="text-[10px] text-slate-400">Credit note</label><input value={creditNoteAmount} onChange={e=>setCreditNoteAmount(e.target.value)} type="number" min="0" step="0.01" className={`${inputClass} w-full mt-1`}/></div><textarea value={creditNoteReason} onChange={e=>setCreditNoteReason(e.target.value)} placeholder="Credit note reason" className={`${inputClass} min-h-16`}/><textarea value={managerRemarks} onChange={e=>setManagerRemarks(e.target.value)} placeholder="Manager remarks" className={`${inputClass} min-h-16`}/></div><button onClick={()=>void saveManagerDecision()} className="px-5 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-xs flex items-center gap-2"><Save className="w-4 h-4"/> Approve &amp; Send to Accounts</button></div>}{collectable&&<div className="mx-5 mb-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-5 space-y-4"><div className="flex items-center gap-2 text-emerald-300 font-black"><CreditCard className="w-4 h-4"/> Confirm Payment</div><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><div><label className="text-[10px] text-slate-400">Payment method</label><select value={method} onChange={e=>setMethod(e.target.value)} className={`${inputClass} w-full mt-1`}><option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI_QR">UPI / QR</option><option value="BANK_TRANSFER">Bank Transfer</option></select></div><div><label className="text-[10px] text-slate-400">Amount to collect</label><input value={amount} onChange={e=>setAmount(e.target.value)} type="number" step="0.01" className={`${inputClass} w-full mt-1`}/></div><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Payment receipt/reference" className={inputClass}/><input value={bankName} onChange={e=>setBankName(e.target.value)} placeholder="Bank name (if applicable)" className={inputClass}/><input value={cardLast4} onChange={e=>setCardLast4(e.target.value)} placeholder="Card last 4 digits" maxLength={4} className={inputClass}/><input value={utr} onChange={e=>setUtr(e.target.value)} placeholder="UTR / transaction ID" className={inputClass}/></div><textarea value={remarks} onChange={e=>setRemarks(e.target.value)} placeholder="Accounts remarks" className={`${inputClass} w-full min-h-16`}/><button onClick={()=>void confirmPayment()} className="w-full px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4"/> Confirm Payment &amp; Generate Invoice</button></div>}{isWarehouse&&<div className="mx-5 mb-5 rounded-2xl border border-sky-500/30 bg-sky-950/20 p-5 space-y-4"><div className="flex items-center gap-2 text-sky-300 font-black"><Truck className="w-4 h-4"/> Warehouse Completion</div><div className="grid grid-cols-1 md:grid-cols-3 gap-3"><input value={loadedBy} onChange={e=>setLoadedBy(e.target.value)} placeholder="Loaded By" className={inputClass}/><input value={verifiedBy} onChange={e=>setVerifiedBy(e.target.value)} placeholder="Verified By" className={inputClass}/><input value={vehicleNumber} onChange={e=>setVehicleNumber(e.target.value)} placeholder="Vehicle Number" className={inputClass}/></div><textarea value={warehouseRemarks} onChange={e=>setWarehouseRemarks(e.target.value)} placeholder="Warehouse remarks" className={`${inputClass} w-full min-h-16`}/><button onClick={()=>void completeWarehouse()} className="px-5 py-3 rounded-xl bg-sky-500 text-slate-950 font-black text-xs">Complete Loading</button></div>}{paid&&<div className="mx-5 mb-5 rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4 text-xs text-slate-300 flex items-center gap-2"><Lock className="w-4 h-4 text-emerald-400"/> Payment confirmed. Invoice <span className="font-mono font-black text-white">{selected.invoiceNumber||'—'}</span> is locked and quotation <span className="font-mono text-slate-400">{selected.quotationNumber||'—'}</span> remains available for reference.</div>}</div>;};
+  return <div className="w-full max-w-[1500px] mx-auto p-4 lg:p-6">{renderTabs()}{message&&<div className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-950/30 px-4 py-3 text-xs text-indigo-200">{message}</div>}{loading?<div className="min-h-[420px] flex items-center justify-center text-slate-400">Loading workflow records...</div>:<div className="grid grid-cols-1 xl:grid-cols-[390px_minmax(0,1fr)] gap-5 items-start"><div className="min-w-0">{invoices.length?invoices.map(renderListCard):<div className="rounded-2xl border border-slate-800 bg-slate-900 p-10 text-center text-slate-500">No records waiting at this stage.</div>}</div><div className="min-w-0">{renderDetail()}</div></div>}</div>;
 };
