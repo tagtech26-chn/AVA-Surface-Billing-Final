@@ -4,7 +4,7 @@ const INVOICE_STORAGE_KEY = 'bizflow_invoices_v1';
 const AUTH_TOKEN_KEY = 'avasurface_auth_token';
 
 type ServerInvoice = {
-  id: string; invoiceNumber: string; invoiceDate: string; salespersonName?: string; salespersonMobile?: string;
+  id: string; invoiceNumber?: string | null; quotationNumber?: string | null; invoiceDate: string; salespersonName?: string; salespersonMobile?: string;
   subTotal?: number; subtotal?: number; discountAmount?: number; promoDiscountAmount?: number;
   branchManagerDiscountPercent?: number; branchManagerDiscountAmount?: number; branchManagerRemarks?: string;
   taxAmount?: number; taxableAmount?: number; cgstAmount?: number; sgstAmount?: number; igstAmount?: number; roundOffAmount?: number; grandTotal: number;
@@ -33,8 +33,9 @@ function mapInvoice(source: ServerInvoice): Invoice {
   const payments = (source.payments || []).map((payment) => ({ id: payment.id, amount: number(payment.amount), method: (payment.method || source.paymentMethodConfirmed || source.paymentMethodRequested || 'CASH') as PaymentMethod, referenceNumber: payment.reference, date: payment.paymentDateUtc || source.paymentConfirmedAtUtc || source.invoiceDate }));
   const amountPaid = payments.reduce((sum, payment) => sum + payment.amount, 0);
   const status = source.status === 'PAID' || source.workflowStatus === 'PAYMENT_CONFIRMED' || source.workflowStatus === 'COMPLETED' ? 'PAID' : amountPaid > 0 ? 'PARTIAL' : 'UNPAID';
+  const documentNumber = source.invoiceNumber?.trim() || source.quotationNumber?.trim() || '';
   return {
-    id: source.id, invoiceNumber: source.invoiceNumber, date: source.invoiceDate, customer: mapCustomer(source.customer), cashierName: 'Billing', cashierRole: 'BILLING_USER',
+    id: source.id, invoiceNumber: documentNumber, quotationNumber: source.quotationNumber?.trim() || undefined, date: source.invoiceDate, customer: mapCustomer(source.customer), cashierName: 'Billing', cashierRole: 'BILLING_USER',
     salespersonName: source.salespersonName || source.salesperson?.name, salespersonMobile: source.salespersonMobile || source.salesperson?.mobile, items: (source.lines || []).map(mapLine),
     subtotal: number(source.subTotal ?? source.subtotal), itemDiscountsTotal: number(source.discountAmount), promoDiscountAmount: number(source.promoDiscountAmount),
     branchManagerDiscountPercent: number(source.branchManagerDiscountPercent), branchManagerDiscountAmount: number(source.branchManagerDiscountAmount), branchManagerRemarks: source.branchManagerRemarks, manualDiscountAmount: number(source.branchManagerDiscountAmount),
