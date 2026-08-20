@@ -111,7 +111,9 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.Property(x => x.PromoDiscountAmount).HasPrecision(18, 2);
             e.Property(x => x.BranchManagerDiscountPercent).HasPrecision(5, 2);
             e.Property(x => x.BranchManagerDiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.CreditNoteAmount).HasPrecision(18, 2);
             e.Property(x => x.BranchManagerRemarks).HasMaxLength(500);
+            e.Property(x => x.CreditNoteReason).HasMaxLength(500);
             e.Property(x => x.WorkflowStatus).HasMaxLength(40).IsRequired();
             e.Property(x => x.PaymentConfirmedByName).HasMaxLength(150);
             e.Property(x => x.PaymentMethodConfirmed).HasMaxLength(30);
