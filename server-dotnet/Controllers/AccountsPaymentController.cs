@@ -16,8 +16,8 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
     public async Task<ActionResult> ConfirmPayment(Guid invoiceId, PaymentRequest request, CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        if (!userId.HasValue || request.UserId != userId.Value) return Forbid();
-        var accounts = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == userId.Value && x.IsActive && (x.Role == "ACCOUNTANT" || x.Role == "ACCOUNTS" || x.Role == "ADMIN"), cancellationToken);
+        if (!userId.HasValue) return Unauthorized();
+        var accounts = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == userId.Value && x.IsActive && (x.Role == "ACCOUNTANT" || x.Role == "ACCOUNTS" || x.Role == "ADMIN"), cancellationToken);
         if (accounts is null) return Forbid();
 
         var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
@@ -35,8 +35,6 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
         if (method == "CARD" && !System.Text.RegularExpressions.Regex.IsMatch(request.CardLast4 ?? string.Empty, "^\\d{4}$")) return BadRequest("Card last 4 digits are required.");
         if (method is "UPI_QR" or "BANK_TRANSFER" && string.IsNullOrWhiteSpace(request.Utr)) return BadRequest("UTR / transaction ID is required.");
 
-        // Manager discount is already reflected in GrandTotal. Credit note is NOT part of invoice value;
-        // it only reduces the amount that Accounts actually collects.
         var netReceivable = Math.Max(0m, invoice.GrandTotal - invoice.CreditNoteAmount);
         if (Math.Abs(request.Amount - netReceivable) > 0.01m)
             return BadRequest($"Payment amount must exactly match the Accounts collection amount of {netReceivable:0.00}. Invoice value is {invoice.GrandTotal:0.00}, manager discount is {invoice.BranchManagerDiscountAmount:0.00}, and credit note is {invoice.CreditNoteAmount:0.00}.");
@@ -56,7 +54,6 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
             invoice.WorkflowStatus = "PAYMENT_CONFIRMED";
             invoice.Status = "PAID";
 
-            // Explicit Id is required by the Payment entity in the workflow implementation.
             db.Payments.Add(new Payment
             {
                 Id = Guid.NewGuid(),
@@ -79,10 +76,10 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
-        catch
+        catch (Exception ex)
         {
             await transaction.RollbackAsync(cancellationToken);
-            throw;
+            return StatusCode(500, new { message = "Payment could not be saved.", detail = ex.Message });
         }
 
         return Ok(new
@@ -93,6 +90,7 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
             ManagerDiscountAmount = invoice.BranchManagerDiscountAmount,
             CreditNoteAmount = invoice.CreditNoteAmount,
             AmountCollected = request.Amount,
+            AmountToCollect = netReceivable,
             invoice.WorkflowStatus,
             invoice.Status,
             invoice.PaymentConfirmedByName,
