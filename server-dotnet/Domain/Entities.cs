@@ -134,6 +134,11 @@ public sealed class Invoice
     public decimal BranchManagerDiscountAmount { get; set; }
     public Guid? BranchManagerUserId { get; set; }
     public string? BranchManagerRemarks { get; set; }
+    public bool CreditNoteFlagged { get; set; }
+    public decimal CreditNoteAmount { get; set; }
+    public Guid? CreditNoteUserId { get; set; }
+    public DateTime? CreditNoteFlaggedAtUtc { get; set; }
+    public string? CreditNoteReason { get; set; }
     public decimal TaxableAmount { get; set; }
     public decimal CgstAmount { get; set; }
     public decimal SgstAmount { get; set; }
