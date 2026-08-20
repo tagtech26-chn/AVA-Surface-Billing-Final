@@ -1,55 +1,33 @@
-import React, { useEffect, useState } from 'react';
-import { CheckCircle2, PackageCheck, CreditCard, Percent, XCircle } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, PackageCheck, CreditCard, ClipboardList, Lock, Save, Truck } from 'lucide-react';
 import { UserProfile } from '../types';
-import { formatCurrency, formatDateTime } from '../lib/utils';
+import { authHeaders, formatCurrency, formatDateTime } from '../lib/utils';
 
 interface WorkflowInvoice {
-  id: string;
-  invoiceNumber: string;
-  invoiceDate: string;
-  grandTotal: number;
-  subTotal?: number;
-  discountAmount?: number;
-  promoDiscountAmount?: number;
-  branchManagerDiscountPercent?: number;
-  branchManagerDiscountAmount?: number;
-  branchManagerUserId?: string;
-  branchManagerRemarks?: string;
-  workflowStatus: string;
-  paymentMethodRequested?: string;
-  paymentMethodConfirmed?: string;
-  paymentSpecificReference?: string;
-  customer?: { name?: string; phone?: string };
-  salespersonName?: string;
-  salespersonMobile?: string;
-  lines?: Array<{ quantity: number; product?: { name?: string; sku?: string; unit?: string } }>;
+  id: string; invoiceNumber: string; invoiceDate: string; grandTotal: number; subTotal?: number; discountAmount?: number; promoDiscountAmount?: number;
+  branchManagerDiscountPercent?: number; branchManagerDiscountAmount?: number; creditNoteFlagged?: boolean; creditNoteAmount?: number; creditNoteReason?: string;
+  branchManagerUserId?: string; branchManagerRemarks?: string; workflowStatus: string; status?: string; paymentMethodRequested?: string; paymentConfirmedAtUtc?: string;
+  customer?: { name?: string; phone?: string }; salesperson?: { name?: string; mobile?: string }; salespersonName?: string; salespersonMobile?: string;
+  lines?: Array<{ id?: string; quantity: number; unitPrice?: number; lineTotal?: number; product?: { name?: string; sku?: string; unit?: string; gstRate?: number } }>;
 }
 
 interface Props { activeUser: UserProfile; currencySymbol: string; onPaymentConfirmed?: (invoice: WorkflowInvoice) => void; }
 const inputClass = 'px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500';
-
-const authHeaders = (json = false): HeadersInit => {
-  const token = localStorage.getItem('avasurface_auth_token');
-  return {
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {})
-  };
-};
-
-const readError = async (response: Response) => {
-  const text = await response.text();
-  return text || `HTTP ${response.status}`;
-};
+const errorText = async (response: Response) => (await response.text()) || `HTTP ${response.status}`;
 
 export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbol, onPaymentConfirmed }) => {
+  const isManager = activeUser.role === 'MANAGER' || activeUser.role === 'BRANCH_MANAGER';
   const isAccounts = activeUser.role === 'ACCOUNTANT';
   const isWarehouse = activeUser.role === 'WAREHOUSE';
-  const isManager = activeUser.role === 'BRANCH_MANAGER' || activeUser.role === 'MANAGER';
-  const [backendUserId, setBackendUserId] = useState('');
+  const [tab, setTab] = useState<'pending' | 'all' | 'paid'>(isManager ? 'pending' : 'pending');
   const [invoices, setInvoices] = useState<WorkflowInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [discountPercent, setDiscountPercent] = useState('');
+  const [creditNoteAmount, setCreditNoteAmount] = useState('');
+  const [creditNoteReason, setCreditNoteReason] = useState('');
+  const [managerRemarks, setManagerRemarks] = useState('');
   const [method, setMethod] = useState('CASH');
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
@@ -57,93 +35,94 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
   const [cardLast4, setCardLast4] = useState('');
   const [utr, setUtr] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [warehouseUserId, setWarehouseUserId] = useState('');
   const [loadedBy, setLoadedBy] = useState('');
   const [verifiedBy, setVerifiedBy] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [warehouseRemarks, setWarehouseRemarks] = useState('');
-  const [managerDiscount, setManagerDiscount] = useState('');
-  const [managerRemarks, setManagerRemarks] = useState('');
 
-  const resolveBackendUser = async () => {
-    const role = activeUser.role === 'MANAGER' ? 'BRANCH_MANAGER' : activeUser.role;
-    const response = await fetch(`/api/invoice-workflow/workflow-user?role=${encodeURIComponent(role)}`, { headers: authHeaders() });
-    if (!response.ok) throw new Error(await readError(response));
-    const user = await response.json();
-    const id = String(user.id); setBackendUserId(id); return id;
-  };
-
-  const loadInvoices = async () => {
-    setLoading(true);
+  const load = async () => {
+    setLoading(true); setMessage('');
     try {
-      if (!backendUserId) await resolveBackendUser();
-      const endpoint = isManager ? '/api/invoice-workflow/manager-pending' : isAccounts ? '/api/invoice-workflow/pending-payments' : '/api/invoice-workflow/warehouse-ready';
+      let endpoint = '/api/invoice-workflow/warehouse-ready';
+      if (isManager) endpoint = tab === 'paid' ? '/api/manager/invoices/paid' : tab === 'all' ? '/api/manager/invoices' : '/api/manager/invoices/unpaid';
+      else if (isAccounts) endpoint = '/api/invoice-workflow/pending-payments';
       const response = await fetch(endpoint, { headers: authHeaders() });
-      if (!response.ok) throw new Error(await readError(response));
-      setInvoices(await response.json()); setMessage('');
-    } catch (error) { console.error(error); setMessage(error instanceof Error ? error.message : 'Unable to load workflow invoices.'); }
+      if (!response.ok) throw new Error(await errorText(response));
+      const data = await response.json();
+      setInvoices(Array.isArray(data) ? data : []);
+      setSelectedId(null);
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to load invoices.'); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { setBackendUserId(''); void loadInvoices(); }, [activeUser.role]);
-  const selected = invoices.find(x => x.id === selectedId);
+  useEffect(() => { void load(); }, [activeUser.role, tab]);
+
+  const selected = useMemo(() => invoices.find(x => x.id === selectedId) || null, [invoices, selectedId]);
+  const amountToCollect = selected ? Math.max(0, Number(selected.grandTotal || 0) - Number(selected.creditNoteAmount || 0)) : 0;
+
+  const selectManagerInvoice = (invoice: WorkflowInvoice) => {
+    setSelectedId(selectedId === invoice.id ? null : invoice.id);
+    setDiscountPercent(String(invoice.branchManagerDiscountPercent || 0));
+    setCreditNoteAmount(String(invoice.creditNoteAmount || 0));
+    setCreditNoteReason(invoice.creditNoteReason || '');
+    setManagerRemarks(invoice.branchManagerRemarks || '');
+  };
+
+  const saveManagerDecision = async () => {
+    if (!selected) return;
+    const discount = Number(discountPercent || 0);
+    const credit = Number(creditNoteAmount || 0);
+    if (!Number.isFinite(discount) || discount < 0 || discount > 100) return setMessage('Additional discount must be between 0% and 100%.');
+    if (!Number.isFinite(credit) || credit < 0) return setMessage('Credit note amount cannot be negative.');
+    if (credit > Number(selected.grandTotal || 0)) return setMessage('Credit note cannot exceed the final commercial invoice value.');
+    if (credit > 0 && !creditNoteReason.trim()) return setMessage('Credit note reason is required.');
+    const response = await fetch(`/api/manager/invoices/${selected.id}/decision`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, additionalDiscountPercent: discount, creditNoteAmount: credit, creditNoteReason: credit > 0 ? creditNoteReason.trim() : null, remarks: managerRemarks.trim() || null }) });
+    if (!response.ok) return setMessage(await errorText(response));
+    setMessage('Manager decision saved. Invoice is now ready for Accounts.');
+    setSelectedId(null); await load();
+  };
 
   const confirmPayment = async () => {
-    if (!selected || !backendUserId) return setMessage('Accounts user identity is not available.');
-    if (!amount || Number(amount) <= 0) return setMessage('Payment amount must be greater than zero.');
+    if (!selected) return;
+    const paid = Number(amount);
+    if (!Number.isFinite(paid) || Math.abs(paid - amountToCollect) > 0.01) return setMessage(`Accounts must collect exactly ${formatCurrency(amountToCollect, currencySymbol)}.`);
     if (!reference.trim()) return setMessage('Payment receipt/reference is required.');
-    if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) return setMessage('Enter the last 4 digits for card payment.');
+    if (!['CASH','CARD','UPI_QR','BANK_TRANSFER'].includes(method)) return setMessage('Select a valid Accounts payment method.');
+    if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) return setMessage('Card last 4 digits are required.');
     if ((method === 'UPI_QR' || method === 'BANK_TRANSFER') && !utr.trim()) return setMessage('UTR / transaction ID is required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/confirm-payment`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, amount: Number(amount), method, specificReference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null }) });
-    if (!response.ok) return setMessage(await readError(response));
+    const response = await fetch(`/api/accounts/invoices/${selected.id}/confirm-payment`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, amount: paid, method, reference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null }) });
+    if (!response.ok) return setMessage(await errorText(response));
     const confirmed = await response.json() as WorkflowInvoice;
-    setMessage('Payment confirmed. Invoice released to Warehouse and is PRINT READY.'); onPaymentConfirmed?.(confirmed); setSelectedId(null); await loadInvoices();
+    setMessage('Payment confirmed. Manager discount and credit note are now locked.');
+    onPaymentConfirmed?.(confirmed); setSelectedId(null); await load();
   };
 
-  const approveManagerDiscount = async () => {
-    if (!selected || !backendUserId) return setMessage('Manager identity is not available.');
-    if (!managerDiscount || Number(managerDiscount) <= 0 || Number(managerDiscount) > 100) return setMessage('Enter an approved additional discount between 0% and 100%.');
-    if (!managerRemarks.trim()) return setMessage('Manager remarks are required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/approve-manager-discount`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, discountPercent: Number(managerDiscount), remarks: managerRemarks.trim() }) });
-    if (!response.ok) return setMessage(await readError(response));
-    setMessage('Manager approved. Total discount has been recalculated and the invoice is now with Accounts.'); setSelectedId(null); setManagerDiscount(''); setManagerRemarks(''); await loadInvoices();
+  const resolveWarehouseUser = async () => {
+    const response = await fetch('/api/invoice-workflow/workflow-user?role=WAREHOUSE', { headers: authHeaders() });
+    if (!response.ok) throw new Error(await errorText(response));
+    const user = await response.json(); setWarehouseUserId(String(user.id)); return String(user.id);
   };
 
-  const rejectManagerDiscount = async () => {
-    if (!selected || !backendUserId) return setMessage('Manager identity is not available.');
-    if (!managerRemarks.trim()) return setMessage('Rejection remarks are required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/reject-manager-discount`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, remarks: managerRemarks.trim() }) });
-    if (!response.ok) return setMessage(await readError(response));
-    setMessage('Additional discount rejected. Invoice returned for billing action.'); setSelectedId(null); setManagerDiscount(''); setManagerRemarks(''); await loadInvoices();
+  const completeWarehouse = async () => {
+    if (!selected) return;
+    try {
+      const id = warehouseUserId || await resolveWarehouseUser();
+      if (!loadedBy.trim() || !verifiedBy.trim()) return setMessage('Loaded By and Verified By are required.');
+      const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: id, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null }) });
+      if (!response.ok) return setMessage(await errorText(response));
+      setMessage('Warehouse loading completed. Invoice is now COMPLETED.'); setSelectedId(null); await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to complete warehouse loading.'); }
   };
 
-  const markLoaded = async () => {
-    if (!selected || !backendUserId) return setMessage('Warehouse user identity is not available.');
-    if (!loadedBy.trim() || !verifiedBy.trim()) return setMessage('Loaded By and Verified By are required.');
-    const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: backendUserId, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null }) });
-    if (!response.ok) return setMessage(await readError(response));
-    setMessage('Warehouse loading and verification completed. Order is now COMPLETED.'); setSelectedId(null); setLoadedBy(''); setVerifiedBy(''); setVehicleNumber(''); setWarehouseRemarks(''); await loadInvoices();
-  };
+  const renderManager = () => <>
+    <div className="flex items-center gap-2 mb-4"><button onClick={() => setTab('pending')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'pending' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Pending / Unpaid</button><button onClick={() => setTab('all')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'all' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300'}`}>All Invoices</button><button onClick={() => setTab('paid')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'paid' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Paid / Locked</button></div>
+    {invoices.map(invoice => { const paid = invoice.workflowStatus === 'PAYMENT_CONFIRMED' || invoice.workflowStatus === 'COMPLETED' || invoice.status === 'PAID'; const editable = !paid; const isSelected = selectedId === invoice.id; return <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-3"><div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"><div className="space-y-1"><div className="flex items-center gap-2 flex-wrap"><span className="font-mono font-black text-white">{invoice.invoiceNumber}</span><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">{invoice.workflowStatus || invoice.status}</span>{paid && <Lock className="w-3.5 h-3.5 text-emerald-400" />}</div><div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div><div className="text-[11px] text-slate-400">Salesperson: {invoice.salesperson?.name || invoice.salespersonName || '—'}</div><div className="text-[11px] text-slate-400">{formatDateTime(invoice.invoiceDate)} · {invoice.lines?.length || 0} line items</div></div><div className="flex items-center gap-3"><div className="text-right"><div className="text-[10px] text-slate-500">Invoice Value</div><div className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</div></div>{editable && <button onClick={() => selectManagerInvoice(invoice)} className="px-3 py-2 bg-violet-600 hover:bg-violet-500 rounded-xl text-xs font-bold text-white">{isSelected ? 'Close' : 'Review / Finalize'}</button>}</div></div>{isSelected && editable && <div className="mt-4 pt-4 border-t border-slate-800 space-y-3"><div className="grid grid-cols-1 md:grid-cols-4 gap-3"><div><label className="text-[10px] text-slate-400">Original invoice</label><div className="text-lg font-black text-white">{formatCurrency(invoice.subTotal || invoice.grandTotal, currencySymbol)}</div></div><div><label className="text-[10px] text-slate-400">Current commercial value</label><div className="text-lg font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</div></div><div><label className="text-[10px] text-slate-400">Manager discount</label><input value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} type="number" min="0" max="100" step="0.01" className={`${inputClass} w-full`} /></div><div><label className="text-[10px] text-slate-400">Credit note</label><input value={creditNoteAmount} onChange={e => setCreditNoteAmount(e.target.value)} type="number" min="0" step="0.01" className={`${inputClass} w-full`} /></div></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><textarea value={creditNoteReason} onChange={e => setCreditNoteReason(e.target.value)} placeholder="Credit note reason (required when amount > 0)" className={`${inputClass} min-h-20`} /><textarea value={managerRemarks} onChange={e => setManagerRemarks(e.target.value)} placeholder="Manager remarks" className={`${inputClass} min-h-20`} /></div><div className="rounded-xl bg-indigo-950/40 border border-indigo-500/30 p-3 text-xs text-slate-300"><div>Only Manager Discount reduces the invoice value.</div><div className="text-violet-300 mt-1">Credit Note is separate and only reduces Accounts collection.</div><div className="mt-2 font-black text-white">After decision: Invoice Value = Original − Manager Discount</div><button onClick={() => void saveManagerDecision()} className="mt-3 px-4 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-xs flex items-center gap-2"><Save className="w-4 h-4" /> Save Final Manager Decision</button></div></div>}</div>; })}
+  </>;
 
-  return <div className="space-y-5">
-    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5"><div className="flex items-center gap-3">{isManager ? <Percent className="w-6 h-6 text-violet-400" /> : isAccounts ? <CreditCard className="w-6 h-6 text-emerald-400" /> : <PackageCheck className="w-6 h-6 text-amber-400" />}<div><h2 className="text-xl font-black text-white">{isManager ? 'Additional Discount Approval' : isAccounts ? 'Accounts Payment Confirmation' : 'Warehouse Loading & Completion'}</h2><p className="text-xs text-slate-400">Logged in as {activeUser.name} · {activeUser.role}</p></div></div></div>
-    {message && <div className="p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/30 text-xs text-indigo-200">{message}</div>}
-    {loading ? <div className="p-8 text-center text-slate-400">Loading invoices...</div> : invoices.length === 0 ? <div className="p-10 text-center bg-slate-900 border border-slate-800 rounded-3xl text-slate-500">No invoices waiting at this stage.</div> : <div className="grid gap-4">{invoices.map(invoice => {
-      const isSelected = selectedId === invoice.id;
-      const totalDiscount = Number(invoice.discountAmount || 0) + Number(invoice.promoDiscountAmount || 0) + Number(invoice.branchManagerDiscountAmount || 0);
-      const managerApproved = Number(invoice.branchManagerDiscountAmount || 0) > 0 || !!invoice.branchManagerUserId;
-      return <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"><div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap"><span className="font-mono font-black text-white">{invoice.invoiceNumber}</span><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">{invoice.workflowStatus}</span>{managerApproved && <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30 font-bold">MANAGER APPROVED</span>}</div>
-          <div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div>
-          <div className="text-[11px] text-slate-400">Salesperson: {invoice.salespersonName || '—'} {invoice.salespersonMobile ? `· ${invoice.salespersonMobile}` : ''}</div>
-          <div className="text-[11px] text-slate-400">Actual Amount: <strong className="text-slate-200">{formatCurrency(invoice.subTotal || 0, currencySymbol)}</strong> · Total Discount: <strong className="text-amber-300">-{formatCurrency(totalDiscount, currencySymbol)}</strong></div>
-          {isManager && <div className="text-[11px] text-violet-300">Reason: {invoice.branchManagerRemarks || '—'}</div>}{isAccounts && <div className="text-[11px] text-slate-400">Payment requested: <strong className="text-slate-200">{invoice.paymentMethodRequested || 'CASH'}</strong></div>}
-          <div className="text-[11px] text-slate-500">{formatDateTime(invoice.invoiceDate)} · {invoice.lines?.length || 0} line items</div>
-        </div><div className="flex items-center gap-3"><span className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</span>{isManager && <button onClick={() => setSelectedId(isSelected ? null : invoice.id)} className="px-3 py-2 bg-violet-600 hover:bg-violet-500 rounded-xl text-xs font-bold text-white">Review Discount</button>}{isAccounts && <button onClick={() => { setSelectedId(invoice.id); setMethod((invoice.paymentMethodRequested || 'CASH').toUpperCase()); setAmount(String(invoice.grandTotal)); setReference(''); setBankName(''); setCardLast4(''); setUtr(''); setRemarks(''); }} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">Confirm Payment</button>}{isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <button onClick={() => setSelectedId(isSelected ? null : invoice.id)} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-bold text-white">Load & Complete</button>}</div></div>
-        {isSelected && isManager && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><div className="md:col-span-2 p-3 rounded-xl bg-slate-800 text-xs text-slate-300">Existing line/promo discounts: <strong className="text-white">{formatCurrency(Number(invoice.discountAmount || 0) + Number(invoice.promoDiscountAmount || 0), currencySymbol)}</strong><div className="text-violet-300 mt-1">Manager approval is recorded as a workflow/audit marker, not as a separate invoice line.</div></div><input value={managerDiscount} onChange={e => setManagerDiscount(e.target.value)} type="number" min="0.01" max="100" step="0.01" placeholder="Approved additional discount % *" className={`${inputClass} border-violet-500/40`}/><input value={managerRemarks} onChange={e => setManagerRemarks(e.target.value)} placeholder="Manager approval reason *" className={`${inputClass} border-violet-500/40`}/><button onClick={() => void approveManagerDiscount()} className="px-4 py-3 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4"/>Approve &amp; Send to Accounts</button><button onClick={() => void rejectManagerDiscount()} className="px-4 py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><XCircle className="w-4 h-4"/>Reject Request</button></div>}
-        {isSelected && isAccounts && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><select value={method} onChange={e => setMethod(e.target.value)} className={inputClass}><option value="CASH">Cash Collection</option><option value="CARD">Credit / Debit Card</option><option value="UPI_QR">UPI</option><option value="BANK_TRANSFER">Bank Transfer</option></select><input value={amount} onChange={e => setAmount(e.target.value)} type="number" step="0.01" placeholder="Amount" className={inputClass}/><input value={reference} onChange={e => setReference(e.target.value)} placeholder="Receipt / payment reference *" className={inputClass}/>{method === 'CARD' && <input value={cardLast4} onChange={e => setCardLast4(e.target.value.replace(/\D/g, '').slice(0,4))} placeholder="Card last 4 digits *" className={inputClass}/>} {(method === 'UPI_QR' || method === 'BANK_TRANSFER') && <input value={utr} onChange={e => setUtr(e.target.value)} placeholder="UTR / transaction ID *" className={inputClass}/>} {method === 'BANK_TRANSFER' && <input value={bankName} onChange={e => setBankName(e.target.value)} placeholder="Bank name" className={inputClass}/>}<textarea value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Accounts remarks" className={`${inputClass} md:col-span-2`}/><button onClick={() => void confirmPayment()} className="md:col-span-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black">Confirm Payment &amp; Release to Warehouse</button></div>}
-        {isSelected && isWarehouse && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><div className="md:col-span-2 text-xs text-amber-300">Completing warehouse loading marks this order <strong>COMPLETED</strong>. Gate entry/outward movement can be added later without changing this billing workflow.</div><input value={loadedBy} onChange={e => setLoadedBy(e.target.value)} placeholder="Loaded By *" className={inputClass}/><input value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)} placeholder="Verified By *" className={inputClass}/><input value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value)} placeholder="Vehicle Number" className={inputClass}/><textarea value={warehouseRemarks} onChange={e => setWarehouseRemarks(e.target.value)} placeholder="Warehouse remarks" className={`${inputClass} md:col-span-2`}/><button onClick={() => void markLoaded()} className="md:col-span-2 px-4 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4"/>Complete Warehouse Loading</button></div>}
-      </div>;
-    })}</div>}
-  </div>;
+  const renderAccounts = () => <>{invoices.map(invoice => { const isSelected = selectedId === invoice.id; const net = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.creditNoteAmount || 0)); return <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-3"><div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"><div><div className="font-mono font-black text-white">{invoice.invoiceNumber}</div><div className="text-xs text-slate-300 mt-1">{invoice.customer?.name || 'Customer'} · Salesperson: {invoice.salesperson?.name || invoice.salespersonName || '—'}</div><div className="text-[11px] text-slate-400 mt-1">Invoice value: <b className="text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</b> · Credit note: <b className="text-amber-300">{formatCurrency(invoice.creditNoteAmount || 0, currencySymbol)}</b></div></div><div className="flex items-center gap-3"><div className="text-right"><div className="text-[10px] text-slate-500">Amount to collect</div><div className="font-black text-emerald-400">{formatCurrency(net, currencySymbol)}</div></div><button onClick={() => { setSelectedId(isSelected ? null : invoice.id); setMethod((invoice.paymentMethodRequested || 'CASH').toUpperCase()); setAmount(net.toFixed(2)); setReference(''); setBankName(''); setCardLast4(''); setUtr(''); setRemarks(''); }} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">{isSelected ? 'Close' : 'Collect Payment'}</button></div></div>{isSelected && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><select value={method} onChange={e => setMethod(e.target.value)} className={inputClass}><option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI_QR">UPI / QR</option><option value="BANK_TRANSFER">Bank Transfer</option></select><input value={amount} onChange={e => setAmount(e.target.value)} type="number" step="0.01" className={inputClass} placeholder="Amount received"/><input value={reference} onChange={e => setReference(e.target.value)} className={inputClass} placeholder="Receipt / payment reference *" />{method === 'CARD' && <input value={cardLast4} onChange={e => setCardLast4(e.target.value.replace(/\D/g, '').slice(0,4))} className={inputClass} placeholder="Card last 4 digits *" />}{(method === 'UPI_QR' || method === 'BANK_TRANSFER') && <input value={utr} onChange={e => setUtr(e.target.value)} className={inputClass} placeholder="UTR / transaction ID *" />}{method === 'BANK_TRANSFER' && <input value={bankName} onChange={e => setBankName(e.target.value)} className={inputClass} placeholder="Bank name" />}<textarea value={remarks} onChange={e => setRemarks(e.target.value)} className={`${inputClass} md:col-span-2`} placeholder="Accounts remarks" /><button onClick={() => void confirmPayment()} className="md:col-span-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-black text-white flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4" /> Confirm Payment &amp; Lock Invoice</button></div>}</div>; })}</>;
+
+  const renderWarehouse = () => <>{invoices.map(invoice => { const isSelected = selectedId === invoice.id; return <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-3"><div className="flex items-center justify-between gap-3"><div><div className="font-mono font-black text-white">{invoice.invoiceNumber}</div><div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {formatCurrency(invoice.grandTotal, currencySymbol)}</div></div><button onClick={() => setSelectedId(isSelected ? null : invoice.id)} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-bold text-white">{isSelected ? 'Close' : 'Load & Complete'}</button></div>{isSelected && <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3"><input value={loadedBy} onChange={e => setLoadedBy(e.target.value)} className={inputClass} placeholder="Loaded By *"/><input value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)} className={inputClass} placeholder="Verified By *"/><input value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value)} className={inputClass} placeholder="Vehicle Number"/><textarea value={warehouseRemarks} onChange={e => setWarehouseRemarks(e.target.value)} className={`${inputClass} md:col-span-2`} placeholder="Warehouse remarks"/><button onClick={() => void completeWarehouse()} className="md:col-span-2 px-4 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-black text-white flex items-center justify-center gap-2"><Truck className="w-4 h-4"/> Complete Warehouse Loading</button></div>}</div>; })}</>;
+
+  return <div className="space-y-5"><div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 flex items-center gap-3">{isManager ? <ClipboardList className="w-6 h-6 text-violet-400"/> : isAccounts ? <CreditCard className="w-6 h-6 text-emerald-400"/> : <PackageCheck className="w-6 h-6 text-amber-400"/>}<div><h2 className="text-xl font-black text-white">{isManager ? 'Manager Invoice Review' : isAccounts ? 'Accounts Payment Collection' : 'Warehouse Loading & Completion'}</h2><p className="text-xs text-slate-400">Logged in as {activeUser.name} · {activeUser.role}</p></div></div>{message && <div className="p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/30 text-xs text-indigo-200">{message}</div>}{loading ? <div className="p-8 text-center text-slate-400">Loading invoices...</div> : invoices.length === 0 ? <div className="p-10 text-center bg-slate-900 border border-slate-800 rounded-3xl text-slate-500">No invoices at this stage.</div> : isManager ? renderManager() : isAccounts ? renderAccounts() : renderWarehouse()}</div>;
 };
