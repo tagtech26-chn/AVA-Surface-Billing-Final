@@ -10,30 +10,32 @@ import './modern-pos.css';
 const AUTH_TOKEN_KEY = 'avasurface_auth_token';
 const AUTH_USER_KEY = 'avasurface_auth_user';
 
+function clearAuth() {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  sessionStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem('bizflow_active_user_id_v1');
+}
+
 function installAuthenticatedFetch() {
   const originalFetch = window.fetch.bind(window);
 
   window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
-    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const isLoginRequest = url.includes('/api/auth/login');
 
-    if (!token || isLoginRequest) {
-      return originalFetch(input, init);
-    }
+    if (!token || isLoginRequest) return originalFetch(input, init);
 
     const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
     headers.set('Authorization', `Bearer ${token}`);
-
     const response = await originalFetch(input, { ...init, headers });
 
     if (response.status === 401) {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-      localStorage.removeItem(AUTH_USER_KEY);
-      localStorage.removeItem('bizflow_active_user_id_v1');
+      clearAuth();
       window.location.reload();
     }
-
     return response;
   };
 }
@@ -43,36 +45,29 @@ installAuthenticatedFetch();
 function AuthenticatedApp() {
   const [user, setUser] = useState<UserProfile | null>(() => {
     try {
-      const token = localStorage.getItem(AUTH_TOKEN_KEY);
-      const raw = localStorage.getItem(AUTH_USER_KEY);
+      const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+      const raw = sessionStorage.getItem(AUTH_USER_KEY);
       return token && raw ? JSON.parse(raw) as UserProfile : null;
     } catch {
+      clearAuth();
       return null;
     }
   });
 
   useEffect(() => {
     if (!user) return;
-
     const users = Storage.getUsers();
-    const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
-    Storage.saveUsers(nextUsers);
+    Storage.saveUsers([user, ...users.filter(existing => existing.id !== user.id)]);
     Storage.saveActiveUserId(user.id);
     void hydrateProductsFromServer();
   }, [user]);
 
-  if (!user) {
-    return <LoginView onLogin={setUser} />;
-  }
+  if (!user) return <LoginView onLogin={setUser} />;
 
-  // App reads its active user synchronously during initialization. Persist the
-  // authenticated backend identity before mounting it so a stale seeded user
-  // can never appear after a successful login.
   const users = Storage.getUsers();
   const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
   Storage.saveUsers(nextUsers);
   Storage.saveActiveUserId(user.id);
-
   return <App />;
 }
 
