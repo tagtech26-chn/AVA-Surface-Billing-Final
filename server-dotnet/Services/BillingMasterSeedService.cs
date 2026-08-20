@@ -34,13 +34,15 @@ public sealed class BillingMasterSeedService(BillingDbContext db)
         }
 
         // Billing segregation: only CASHIER and BILLING_USER are permitted to create POS invoices.
-        // All other workflow roles are deliberately excluded from the billing-user seed set.
+        // Accounts has its own payment-confirmation workflow and does not create invoices.
         var workflowUsers = new[]
         {
             new AppUser { CompanyId = company.Id, UserName = "cashier", DisplayName = "Cashier", Role = "CASHIER", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "billing", DisplayName = "Billing User", Role = "BILLING_USER", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "branchmanager", DisplayName = "Branch Manager", Role = "BRANCH_MANAGER", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "accounts", DisplayName = "Accounts", Role = "ACCOUNTS", IsActive = true },
+            // Friendly login alias for the Accounts/payment-confirmation user.
+            new AppUser { CompanyId = company.Id, UserName = "accountant", DisplayName = "Accounts", Role = "ACCOUNTS", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "warehouse", DisplayName = "Warehouse", Role = "WAREHOUSE", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "admin", DisplayName = "Administrator", Role = "ADMIN", IsActive = true }
         };
