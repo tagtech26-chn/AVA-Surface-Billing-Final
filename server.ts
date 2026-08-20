@@ -59,7 +59,9 @@ const ASPNET_PROXY_PREFIXES = [
   "/api/companies",
   "/api/products",
   "/api/salespersons",
-  "/api/gst-verification"
+  "/api/gst-verification",
+  "/api/manager",
+  "/api/accounts"
 ];
 
 app.use(ASPNET_PROXY_PREFIXES, async (req, res, next) => {
