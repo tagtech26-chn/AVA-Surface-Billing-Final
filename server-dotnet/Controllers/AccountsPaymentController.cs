@@ -12,6 +12,18 @@ namespace AVASurface.Server.Controllers;
 [Route("api/accounts/invoices")]
 public sealed class AccountsPaymentController(BillingDbContext db) : ControllerBase
 {
+    [HttpGet("unapproved")]
+    public async Task<ActionResult<IEnumerable<Invoice>>> GetUnapproved(CancellationToken cancellationToken)
+        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "MANAGER_APPROVAL_PENDING" || x.WorkflowStatus == "MANAGER_APPROVAL_REJECTED").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
+
+    [HttpGet("approved")]
+    public async Task<ActionResult<IEnumerable<Invoice>>> GetApproved(CancellationToken cancellationToken)
+        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "PAYMENT_PENDING" || x.WorkflowStatus == "PAYMENT_CONFIRMED" || x.WorkflowStatus == "COMPLETED").OrderByDescending(x => x.InvoiceDate).ThenByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
+
+    [HttpGet("pending-payment")]
+    public async Task<ActionResult<IEnumerable<Invoice>>> GetPendingPayment(CancellationToken cancellationToken)
+        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "PAYMENT_PENDING").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
+
     [HttpPost("{invoiceId:guid}/confirm-payment")]
     public async Task<ActionResult> ConfirmPayment(Guid invoiceId, PaymentRequest request, CancellationToken cancellationToken)
     {
@@ -102,6 +114,8 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
             PaymentReference = request.Reference.Trim()
         });
     }
+
+    private IQueryable<Invoice> QueryInvoices() => db.Invoices.AsNoTracking().Include(x => x.Customer).Include(x => x.Salesperson).Include(x => x.Lines).ThenInclude(x => x.Product).Include(x => x.Payments);
 
     private static string? NormalizeMethod(string? value)
     {
