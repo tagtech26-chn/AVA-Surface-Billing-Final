@@ -30,7 +30,7 @@ function mapLine(line: NonNullable<ServerInvoice['lines']>[number]): CartItem {
   return { product, quantity: number(line.quantity), inputQuantity: number(line.quantity), selectedUnit: undefined, discountAmount: number(line.discountAmount), discountPercent: number(line.discountPercent), finalUnitPrice: number(line.unitPrice), totalPrice: number(line.lineTotal) };
 }
 function mapInvoice(source: ServerInvoice): Invoice {
-  const payments = (source.payments || []).map((payment) => ({ id: payment.id, amount: number(payment.amount), method: (payment.method || source.paymentMethodConfirmed || source.paymentMethodRequested || 'CASH') as PaymentMethod, referenceNumber: payment.reference, date: payment.paymentDateUtc || new Date().toISOString() }));
+  const payments = (source.payments || []).map((payment) => ({ id: payment.id, amount: number(payment.amount), method: (payment.method || source.paymentMethodConfirmed || source.paymentMethodRequested || 'CASH') as PaymentMethod, referenceNumber: payment.reference, date: payment.paymentDateUtc || source.paymentConfirmedAtUtc || source.invoiceDate }));
   const amountPaid = payments.reduce((sum, payment) => sum + payment.amount, 0);
   const status = source.status === 'PAID' || source.workflowStatus === 'PAYMENT_CONFIRMED' || source.workflowStatus === 'COMPLETED' ? 'PAID' : amountPaid > 0 ? 'PARTIAL' : 'UNPAID';
   return {
@@ -49,7 +49,7 @@ export async function hydrateInvoicesFromServer(): Promise<Invoice[]> {
   const localInvoices = (() => { try { const raw = localStorage.getItem(INVOICE_STORAGE_KEY); return raw ? JSON.parse(raw) as Invoice[] : []; } catch { return []; } })();
   if (!sessionStorage.getItem(AUTH_TOKEN_KEY)) return localInvoices;
   try {
-    const response = await fetch('/api/invoices'); if (!response.ok) throw new Error(`Invoice API HTTP ${response.status}`);
+    const response = await fetch('/api/invoices/history'); if (!response.ok) throw new Error(`Invoice API HTTP ${response.status}`);
     const payload = await response.json() as InvoiceApiResponse; const serverInvoices = normalizeServerInvoices(payload).map(mapInvoice);
     const merged = new Map<string, Invoice>(); for (const invoice of localInvoices) merged.set(invoice.id || invoice.invoiceNumber, invoice); for (const invoice of serverInvoices) merged.set(invoice.id || invoice.invoiceNumber, invoice);
     const invoices = Array.from(merged.values()).sort((a, b) => (Date.parse(b.date || '') || 0) - (Date.parse(a.date || '') || 0));
