@@ -4,133 +4,21 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
-
 namespace AVASurface.Server.Controllers;
-
 [ApiController]
-[Authorize(Roles = "ACCOUNTANT,ACCOUNTS,ADMIN")]
+[Authorize(Roles="ACCOUNTANT,ACCOUNTS,ADMIN")]
 [Route("api/accounts/invoices")]
-public sealed class AccountsPaymentController(BillingDbContext db) : ControllerBase
+public sealed class AccountsPaymentController(BillingDbContext db):ControllerBase
 {
-    [HttpGet("unapproved")]
-    public async Task<ActionResult<IEnumerable<Invoice>>> GetUnapproved(CancellationToken cancellationToken)
-        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "MANAGER_APPROVAL_PENDING" || x.WorkflowStatus == "MANAGER_APPROVAL_REJECTED").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
-
-    [HttpGet("approved")]
-    public async Task<ActionResult<IEnumerable<Invoice>>> GetApproved(CancellationToken cancellationToken)
-        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "PAYMENT_PENDING" || x.WorkflowStatus == "PAYMENT_CONFIRMED" || x.WorkflowStatus == "COMPLETED").OrderByDescending(x => x.InvoiceDate).ThenByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
-
-    [HttpGet("pending-payment")]
-    public async Task<ActionResult<IEnumerable<Invoice>>> GetPendingPayment(CancellationToken cancellationToken)
-        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "PAYMENT_PENDING").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
-
-    [HttpPost("{invoiceId:guid}/confirm-payment")]
-    public async Task<ActionResult> ConfirmPayment(Guid invoiceId, PaymentRequest request, CancellationToken cancellationToken)
-    {
-        var userId = GetUserId();
-        if (!userId.HasValue) return Unauthorized();
-        var accounts = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == userId.Value && x.IsActive && (x.Role == "ACCOUNTANT" || x.Role == "ACCOUNTS" || x.Role == "ADMIN"), cancellationToken);
-        if (accounts is null) return Forbid();
-
-        var invoice = await db.Invoices.FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
-        if (invoice is null) return NotFound();
-        if (invoice.WorkflowStatus != "PAYMENT_PENDING") return BadRequest($"Invoice is currently in workflow state '{invoice.WorkflowStatus}'.");
-        if (request.Amount <= 0) return BadRequest("Payment amount must be greater than zero.");
-
-        var method = NormalizeMethod(request.Method);
-        if (method is null) return BadRequest("Invalid payment method. Use CASH, CARD, UPI_QR or BANK_TRANSFER.");
-        var requestedMethod = NormalizeMethod(invoice.PaymentMethodRequested);
-        if (requestedMethod is not null && !string.Equals(requestedMethod, method, StringComparison.OrdinalIgnoreCase))
-            return BadRequest($"Payment method mismatch. Invoice requested '{invoice.PaymentMethodRequested}', but Accounts submitted '{request.Method}'.");
-
-        if (string.IsNullOrWhiteSpace(request.Reference)) return BadRequest("Payment receipt/reference is required.");
-        if (method == "CARD" && !System.Text.RegularExpressions.Regex.IsMatch(request.CardLast4 ?? string.Empty, "^\\d{4}$")) return BadRequest("Card last 4 digits are required.");
-        if (method is "UPI_QR" or "BANK_TRANSFER" && string.IsNullOrWhiteSpace(request.Utr)) return BadRequest("UTR / transaction ID is required.");
-
-        var originalInvoiceValue = Math.Max(0m, Math.Round(invoice.GrandTotal + invoice.BranchManagerDiscountAmount, 2, MidpointRounding.AwayFromZero));
-        var netReceivable = Math.Max(0m, invoice.GrandTotal - invoice.CreditNoteAmount);
-        if (Math.Abs(request.Amount - netReceivable) > 0.01m)
-            return BadRequest($"Payment amount must exactly match the Accounts collection amount of {netReceivable:0.00}. Invoice value is {invoice.GrandTotal:0.00}, manager discount is {invoice.BranchManagerDiscountAmount:0.00}, and credit note is {invoice.CreditNoteAmount:0.00}.");
-
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        try
-        {
-            invoice.PaymentConfirmedByUserId = accounts.Id;
-            invoice.PaymentConfirmedByName = accounts.DisplayName;
-            invoice.PaymentConfirmedAtUtc = DateTime.UtcNow;
-            invoice.PaymentMethodConfirmed = method;
-            invoice.PaymentSpecificReference = request.Reference.Trim();
-            invoice.PaymentBankName = string.IsNullOrWhiteSpace(request.BankName) ? null : request.BankName.Trim();
-            invoice.PaymentCardLast4 = string.IsNullOrWhiteSpace(request.CardLast4) ? null : request.CardLast4.Trim();
-            invoice.PaymentUtr = string.IsNullOrWhiteSpace(request.Utr) ? null : request.Utr.Trim();
-            invoice.PaymentRemarks = string.IsNullOrWhiteSpace(request.Remarks) ? null : request.Remarks.Trim();
-            invoice.WorkflowStatus = "PAYMENT_CONFIRMED";
-            invoice.Status = "PAID";
-
-            db.Payments.Add(new Payment
-            {
-                Id = Guid.NewGuid(),
-                InvoiceId = invoice.Id,
-                Amount = request.Amount,
-                Method = method,
-                PaymentDateUtc = request.PaymentDateUtc == default ? DateTime.UtcNow : request.PaymentDateUtc,
-                Reference = request.Reference.Trim()
-            });
-
-            db.AuditLogs.Add(new AuditLog
-            {
-                UserId = accounts.Id,
-                Action = "INVOICE_PAYMENT_CONFIRMED",
-                EntityName = nameof(Invoice),
-                EntityId = invoice.Id,
-                Details = $"Accounts collected {request.Amount:0.00}; original invoice value {originalInvoiceValue:0.00}; final invoice value {invoice.GrandTotal:0.00}; manager discount {invoice.BranchManagerDiscountPercent:0.##}% ({invoice.BranchManagerDiscountAmount:0.00}); credit note {invoice.CreditNoteAmount:0.00}; amount to collect {netReceivable:0.00}; method {method}; reference {request.Reference.Trim()}."
-            });
-
-            await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return StatusCode(500, new { message = "Payment could not be saved.", detail = ex.Message });
-        }
-
-        return Ok(new
-        {
-            invoice.Id,
-            invoice.InvoiceNumber,
-            OriginalInvoiceValue = originalInvoiceValue,
-            invoice.GrandTotal,
-            BranchManagerDiscountPercent = invoice.BranchManagerDiscountPercent,
-            BranchManagerDiscountAmount = invoice.BranchManagerDiscountAmount,
-            CreditNoteAmount = invoice.CreditNoteAmount,
-            AmountCollected = request.Amount,
-            AmountToCollect = netReceivable,
-            invoice.WorkflowStatus,
-            invoice.Status,
-            invoice.PaymentConfirmedByName,
-            invoice.PaymentConfirmedAtUtc,
-            PaymentMethod = method,
-            PaymentReference = request.Reference.Trim()
-        });
-    }
-
-    private IQueryable<Invoice> QueryInvoices() => db.Invoices.AsNoTracking().Include(x => x.Customer).Include(x => x.Salesperson).Include(x => x.Lines).ThenInclude(x => x.Product).Include(x => x.Payments);
-
-    private static string? NormalizeMethod(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        return value.Trim().ToUpperInvariant() switch
-        {
-            "CASH" => "CASH",
-            "CARD" => "CARD",
-            "UPI" or "UPI_QR" or "UPI/QR" or "UPI QR" => "UPI_QR",
-            "BANK" or "BANK_TRANSFER" or "BANK TRANSFER" or "TRANSFER" => "BANK_TRANSFER",
-            _ => null
-        };
-    }
-
-    private Guid? GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : null;
-
-    public sealed record PaymentRequest(Guid UserId, decimal Amount, string Method, string Reference, string? BankName = null, string? CardLast4 = null, string? Utr = null, string? Remarks = null, DateTime PaymentDateUtc = default);
+ [HttpGet("unapproved")] public async Task<ActionResult<IEnumerable<Invoice>>> GetUnapproved(CancellationToken cancellationToken)=>Ok(await QueryInvoices().Where(x=>x.WorkflowStatus=="MANAGER_APPROVAL_PENDING"||x.WorkflowStatus=="MANAGER_APPROVAL_REJECTED").OrderBy(x=>x.InvoiceDate).ToListAsync(cancellationToken));
+ [HttpGet("approved")] public async Task<ActionResult<IEnumerable<Invoice>>> GetApproved(CancellationToken cancellationToken)=>Ok(await QueryInvoices().Where(x=>x.WorkflowStatus=="PAYMENT_PENDING"||x.WorkflowStatus=="PAYMENT_CONFIRMED"||x.WorkflowStatus=="COMPLETED").OrderByDescending(x=>x.InvoiceDate).ThenByDescending(x=>x.CreatedAtUtc).ToListAsync(cancellationToken));
+ [HttpGet("pending-payment")] public async Task<ActionResult<IEnumerable<Invoice>>> GetPendingPayment(CancellationToken cancellationToken)=>Ok(await QueryInvoices().Where(x=>x.WorkflowStatus=="PAYMENT_PENDING").OrderBy(x=>x.InvoiceDate).ToListAsync(cancellationToken));
+ [HttpPost("{invoiceId:guid}/confirm-payment")]
+ public async Task<ActionResult> ConfirmPayment(Guid invoiceId,PaymentRequest request,CancellationToken cancellationToken){var userId=GetUserId();if(!userId.HasValue)return Unauthorized();var accounts=await db.AppUsers.FirstOrDefaultAsync(x=>x.Id==userId.Value&&x.IsActive&&(x.Role=="ACCOUNTANT"||x.Role=="ACCOUNTS"||x.Role=="ADMIN"),cancellationToken);if(accounts is null)return Forbid();var invoice=await db.Invoices.FirstOrDefaultAsync(x=>x.Id==invoiceId,cancellationToken);if(invoice is null)return NotFound();if(invoice.WorkflowStatus!="PAYMENT_PENDING")return BadRequest($"Invoice is currently in workflow state '{invoice.WorkflowStatus}'.");if(request.Amount<=0)return BadRequest("Payment amount must be greater than zero.");var method=NormalizeMethod(request.Method);if(method is null)return BadRequest("Invalid payment method. Use CASH, CARD, UPI_QR or BANK_TRANSFER.");var requestedMethod=NormalizeMethod(invoice.PaymentMethodRequested);if(requestedMethod is not null&&!string.Equals(requestedMethod,method,StringComparison.OrdinalIgnoreCase))return BadRequest($"Payment method mismatch. Invoice requested '{invoice.PaymentMethodRequested}', but Accounts submitted '{request.Method}'.");if(string.IsNullOrWhiteSpace(request.Reference))return BadRequest("Payment receipt/reference is required.");if(method=="CARD"&&!System.Text.RegularExpressions.Regex.IsMatch(request.CardLast4??string.Empty,"^\\d{4}$"))return BadRequest("Card last 4 digits are required.");if(method is "UPI_QR" or "BANK_TRANSFER"&&string.IsNullOrWhiteSpace(request.Utr))return BadRequest("UTR / transaction ID is required.");var originalInvoiceValue=Math.Max(0m,Math.Round(invoice.GrandTotal+invoice.BranchManagerDiscountAmount,2,MidpointRounding.AwayFromZero));var netReceivable=Math.Max(0m,invoice.GrandTotal-invoice.CreditNoteAmount);if(Math.Abs(request.Amount-netReceivable)>0.01m)return BadRequest($"Payment amount must exactly match the Accounts collection amount of {netReceivable:0.00}. Invoice value is {invoice.GrandTotal:0.00}, manager discount is {invoice.BranchManagerDiscountAmount:0.00}, and credit note is {invoice.CreditNoteAmount:0.00}.");
+ await using var transaction=await db.Database.BeginTransactionAsync(cancellationToken);try{var invoiceDate=invoice.InvoiceDate;var fiscalStartYear=invoiceDate.Month>=4?invoiceDate.Year:invoiceDate.Year-1;var fy=$"{fiscalStartYear%100:00}{(fiscalStartYear+1)%100:00}";var lockResource=$"AVASurface.InvoiceSeries.{invoice.CompanyId}.{fy}";await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sp_getapplock @Resource = {lockResource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000",cancellationToken);var existingNumbers=await db.Invoices.Where(x=>x.CompanyId==invoice.CompanyId&&x.InvoiceNumber.StartsWith("AVA-")).Select(x=>x.InvoiceNumber).ToListAsync(cancellationToken);var nextInvoiceNumber=1;foreach(var existingNumber in existingNumbers){var parts=existingNumber.Split('-');if(parts.Length!=3||!parts[0].Equals("AVA",StringComparison.OrdinalIgnoreCase)||!parts[2].Equals(fy,StringComparison.Ordinal))continue;if(int.TryParse(parts[1],out var parsed)&&parsed>=nextInvoiceNumber)nextInvoiceNumber=parsed+1;}invoice.InvoiceNumber=$"AVA-{nextInvoiceNumber:0000}-{fy}";invoice.PaymentConfirmedByUserId=accounts.Id;invoice.PaymentConfirmedByName=accounts.DisplayName;invoice.PaymentConfirmedAtUtc=DateTime.UtcNow;invoice.PaymentMethodConfirmed=method;invoice.PaymentSpecificReference=request.Reference.Trim();invoice.PaymentBankName=string.IsNullOrWhiteSpace(request.BankName)?null:request.BankName.Trim();invoice.PaymentCardLast4=string.IsNullOrWhiteSpace(request.CardLast4)?null:request.CardLast4.Trim();invoice.PaymentUtr=string.IsNullOrWhiteSpace(request.Utr)?null:request.Utr.Trim();invoice.PaymentRemarks=string.IsNullOrWhiteSpace(request.Remarks)?null:request.Remarks.Trim();invoice.WorkflowStatus="PAYMENT_CONFIRMED";invoice.Status="PAID";db.Payments.Add(new Payment{Id=Guid.NewGuid(),InvoiceId=invoice.Id,Amount=request.Amount,Method=method,PaymentDateUtc=request.PaymentDateUtc==default?DateTime.UtcNow:request.PaymentDateUtc,Reference=request.Reference.Trim()});db.AuditLogs.Add(new AuditLog{UserId=accounts.Id,Action="INVOICE_PAYMENT_CONFIRMED",EntityName=nameof(Invoice),EntityId=invoice.Id,Details=$"Quotation {invoice.QuotationNumber} converted to invoice {invoice.InvoiceNumber}; Accounts collected {request.Amount:0.00}; original value {originalInvoiceValue:0.00}; final value {invoice.GrandTotal:0.00}; manager discount {invoice.BranchManagerDiscountPercent:0.##}% ({invoice.BranchManagerDiscountAmount:0.00}); credit note {invoice.CreditNoteAmount:0.00}; amount to collect {netReceivable:0.00}; method {method}; reference {request.Reference.Trim()}."});await db.SaveChangesAsync(cancellationToken);await transaction.CommitAsync(cancellationToken);}catch(Exception ex){await transaction.RollbackAsync(cancellationToken);return StatusCode(500,new{message="Payment could not be saved.",detail=ex.Message});}
+ return Ok(new{invoice.Id,invoice.QuotationNumber,invoice.InvoiceNumber,OriginalInvoiceValue=originalInvoiceValue,invoice.GrandTotal,BranchManagerDiscountPercent=invoice.BranchManagerDiscountPercent,BranchManagerDiscountAmount=invoice.BranchManagerDiscountAmount,CreditNoteAmount=invoice.CreditNoteAmount,AmountCollected=request.Amount,AmountToCollect=netReceivable,invoice.WorkflowStatus,invoice.Status,invoice.PaymentConfirmedByName,invoice.PaymentConfirmedAtUtc,PaymentMethod=method,PaymentReference=request.Reference.Trim()});}
+ private IQueryable<Invoice> QueryInvoices()=>db.Invoices.AsNoTracking().Include(x=>x.Customer).Include(x=>x.Salesperson).Include(x=>x.Lines).ThenInclude(x=>x.Product).Include(x=>x.Payments);
+ private static string? NormalizeMethod(string? value){if(string.IsNullOrWhiteSpace(value))return null;return value.Trim().ToUpperInvariant() switch{"CASH"=>"CASH","CARD"=>"CARD","UPI" or "UPI_QR" or "UPI/QR" or "UPI QR"=>"UPI_QR","BANK" or "BANK_TRANSFER" or "BANK TRANSFER" or "TRANSFER"=>"BANK_TRANSFER",_=>null};}
+ private Guid? GetUserId()=>Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var id)?id:null;
+ public sealed record PaymentRequest(Guid UserId,decimal Amount,string Method,string Reference,string? BankName=null,string? CardLast4=null,string? Utr=null,string? Remarks=null,DateTime PaymentDateUtc=default);
 }
