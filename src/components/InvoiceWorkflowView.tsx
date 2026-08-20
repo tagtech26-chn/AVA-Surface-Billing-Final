@@ -1,20 +1,57 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, PackageCheck, CreditCard, ClipboardList, Lock, Save, Truck } from 'lucide-react';
+import { CheckCircle2, CreditCard, ClipboardList, Lock, Save, Truck } from 'lucide-react';
 import { UserProfile } from '../types';
 import { authHeaders, formatCurrency, formatDateTime } from '../lib/utils';
 
 interface WorkflowInvoice {
-  id: string; invoiceNumber: string; invoiceDate: string; grandTotal: number; subTotal?: number; discountAmount?: number; promoDiscountAmount?: number;
-  branchManagerDiscountPercent?: number; branchManagerDiscountAmount?: number; creditNoteFlagged?: boolean; creditNoteAmount?: number; creditNoteReason?: string;
-  branchManagerUserId?: string; branchManagerRemarks?: string; workflowStatus: string; status?: string; paymentMethodRequested?: string; paymentConfirmedAtUtc?: string;
-  customer?: { name?: string; phone?: string }; salesperson?: { name?: string; mobile?: string }; salespersonName?: string; salespersonMobile?: string;
-  lines?: Array<{ id?: string; quantity: number; unitPrice?: number; lineTotal?: number; product?: { name?: string; sku?: string; unit?: string; gstRate?: number } }>;
+  id: string;
+  invoiceNumber?: string | null;
+  quotationNumber?: string | null;
+  invoiceDate: string;
+  grandTotal: number;
+  subTotal?: number;
+  discountAmount?: number;
+  promoDiscountAmount?: number;
+  branchManagerDiscountPercent?: number;
+  branchManagerDiscountAmount?: number;
+  creditNoteFlagged?: boolean;
+  creditNoteAmount?: number;
+  creditNoteReason?: string;
+  branchManagerUserId?: string;
+  branchManagerRemarks?: string;
+  workflowStatus: string;
+  status?: string;
+  paymentMethodRequested?: string;
+  paymentConfirmedAtUtc?: string;
+  paymentMethodConfirmed?: string;
+  paymentSpecificReference?: string;
+  customer?: { name?: string; phone?: string };
+  salesperson?: { name?: string; mobile?: string };
+  salespersonName?: string;
+  salespersonMobile?: string;
+  lines?: Array<{
+    id?: string;
+    quantity: number;
+    unitPrice?: number;
+    lineTotal?: number;
+    taxableAmount?: number;
+    product?: { name?: string; sku?: string; unit?: string; gstRate?: number };
+  }>;
 }
 
-interface Props { activeUser: UserProfile; currencySymbol: string; onPaymentConfirmed?: (invoice: WorkflowInvoice) => void; }
+interface Props {
+  activeUser: UserProfile;
+  currencySymbol: string;
+  onPaymentConfirmed?: (invoice: WorkflowInvoice) => void;
+}
+
 const inputClass = 'px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500';
 const errorText = async (response: Response) => (await response.text()) || `HTTP ${response.status}`;
 type InvoiceTab = 'unapproved' | 'approved';
+
+const isPaid = (invoice: WorkflowInvoice) => invoice.workflowStatus === 'PAYMENT_CONFIRMED' || invoice.workflowStatus === 'COMPLETED' || invoice.status === 'PAID';
+const documentNumber = (invoice: WorkflowInvoice) => isPaid(invoice) ? (invoice.invoiceNumber || invoice.quotationNumber || '—') : (invoice.quotationNumber || '—');
+const documentLabel = (invoice: WorkflowInvoice) => isPaid(invoice) ? 'INVOICE' : 'QUOTATION';
 
 export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbol, onPaymentConfirmed }) => {
   const isManager = activeUser.role === 'MANAGER' || activeUser.role === 'BRANCH_MANAGER';
@@ -36,67 +73,233 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
   const [cardLast4, setCardLast4] = useState('');
   const [utr, setUtr] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [warehouseUserId, setWarehouseUserId] = useState('');
   const [loadedBy, setLoadedBy] = useState('');
   const [verifiedBy, setVerifiedBy] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [warehouseRemarks, setWarehouseRemarks] = useState('');
-  const popup = (title: string, text: string, success = false) => { const prefix = success ? 'SUCCESS' : 'ERROR'; window.alert(`${prefix}: ${title}\n\n${text}`); setMessage(`${title}: ${text}`); };
-  const load = async () => {
-    setLoading(true); setMessage('');
+
+  const popup = (title: string, text: string, success = false) => {
+    const prefix = success ? 'SUCCESS' : 'ERROR';
+    window.alert(`${prefix}: ${title}\n\n${text}`);
+    setMessage(`${title}: ${text}`);
+  };
+
+  const load = async (keepSelection = false) => {
+    setLoading(true);
+    setMessage('');
     try {
       let endpoint = '/api/invoice-workflow/warehouse-ready';
       if (isManager) endpoint = tab === 'approved' ? '/api/manager/invoices/approved' : '/api/manager/invoices/unapproved';
       else if (isAccounts) endpoint = tab === 'approved' ? '/api/accounts/invoices/approved' : '/api/accounts/invoices/unapproved';
       const response = await fetch(endpoint, { headers: authHeaders() });
       if (!response.ok) throw new Error(await errorText(response));
-      const data = await response.json(); setInvoices(Array.isArray(data) ? data : []); setSelectedId(null);
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to load invoices.'); }
-    finally { setLoading(false); }
+      const data = await response.json();
+      const rows = Array.isArray(data) ? data as WorkflowInvoice[] : [];
+      setInvoices(rows);
+      if (!keepSelection) setSelectedId(rows.length ? rows[0].id : null);
+      else if (selectedId && !rows.some(x => x.id === selectedId)) setSelectedId(rows.length ? rows[0].id : null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load workflow records.');
+      setInvoices([]);
+      setSelectedId(null);
+    } finally {
+      setLoading(false);
+    }
   };
+
   useEffect(() => { void load(); }, [activeUser.role, tab]);
-  const selected = useMemo(() => invoices.find(x => x.id === selectedId) || null, [invoices, selectedId]);
+
+  const selected = useMemo(() => invoices.find(x => x.id === selectedId) || invoices[0] || null, [invoices, selectedId]);
   const amountToCollect = selected ? Math.max(0, Number(selected.grandTotal || 0) - Number(selected.creditNoteAmount || 0)) : 0;
-  const selectManagerInvoice = (invoice: WorkflowInvoice) => { setSelectedId(selectedId === invoice.id ? null : invoice.id); setDiscountPercent(String(invoice.branchManagerDiscountPercent || 0)); setCreditNoteAmount(String(invoice.creditNoteAmount || 0)); setCreditNoteReason(invoice.creditNoteReason || ''); setManagerRemarks(invoice.branchManagerRemarks || ''); };
+
+  useEffect(() => {
+    if (!selected) return;
+    setSelectedId(selected.id);
+    setDiscountPercent(String(selected.branchManagerDiscountPercent || 0));
+    setCreditNoteAmount(String(selected.creditNoteAmount || 0));
+    setCreditNoteReason(selected.creditNoteReason || '');
+    setManagerRemarks(selected.branchManagerRemarks || '');
+    setAmount(String(amountToCollect));
+  }, [selected?.id, selected?.branchManagerDiscountPercent, selected?.creditNoteAmount, selected?.creditNoteReason, selected?.branchManagerRemarks, amountToCollect]);
+
   const saveManagerDecision = async () => {
     if (!selected) return;
     try {
-      const discount = Number(discountPercent || 0); const credit = Number(creditNoteAmount || 0);
+      const discount = Number(discountPercent || 0);
+      const credit = Number(creditNoteAmount || 0);
       if (!Number.isFinite(discount) || discount < 0 || discount > 100) return popup('Manager decision not saved', 'Additional discount must be between 0% and 100%.');
       if (!Number.isFinite(credit) || credit < 0) return popup('Manager decision not saved', 'Credit note amount cannot be negative.');
-      if (credit > Number(selected.grandTotal || 0)) return popup('Manager decision not saved', 'Credit note cannot exceed the final commercial invoice value.');
+      if (credit > Number(selected.grandTotal || 0)) return popup('Manager decision not saved', 'Credit note cannot exceed the commercial value.');
       if (credit > 0 && !creditNoteReason.trim()) return popup('Manager decision not saved', 'Credit note reason is required.');
-      const response = await fetch(`/api/manager/invoices/${selected.id}/decision`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, additionalDiscountPercent: discount, creditNoteAmount: credit, creditNoteReason: credit > 0 ? creditNoteReason.trim() : null, remarks: managerRemarks.trim() || null }) });
+      const response = await fetch(`/api/manager/invoices/${selected.id}/decision`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ userId: activeUser.id, additionalDiscountPercent: discount, creditNoteAmount: credit, creditNoteReason: credit > 0 ? creditNoteReason.trim() : null, remarks: managerRemarks.trim() || null })
+      });
       if (!response.ok) return popup('Manager decision not saved', await errorText(response));
       const saved = await response.json() as WorkflowInvoice;
-      popup('Manager decision saved', `${saved.invoiceNumber || selected.invoiceNumber} is now approved and ready for Accounts.\n\nInvoice value: ${formatCurrency(Number(saved.grandTotal || 0), currencySymbol)}\nManager discount: ${formatCurrency(Number(saved.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(saved.creditNoteAmount || 0), currencySymbol)}\nAmount to collect: ${formatCurrency(Math.max(0, Number(saved.grandTotal || 0) - Number(saved.creditNoteAmount || 0)), currencySymbol)}`, true);
-      setSelectedId(null); await load();
-    } catch (error) { popup('Manager decision not saved', error instanceof Error ? error.message : 'Unexpected error while saving the manager decision.'); }
+      popup('Manager decision saved', `${documentNumber(saved)} is approved and ready for Accounts.\n\nQuotation: ${saved.quotationNumber || '—'}\nManager discount: ${formatCurrency(Number(saved.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(saved.creditNoteAmount || 0), currencySymbol)}\nAmount to collect: ${formatCurrency(Math.max(0, Number(saved.grandTotal || 0) - Number(saved.creditNoteAmount || 0)), currencySymbol)}`, true);
+      await load();
+    } catch (error) {
+      popup('Manager decision not saved', error instanceof Error ? error.message : 'Unexpected error while saving.');
+    }
   };
+
   const confirmPayment = async () => {
     if (!selected) return;
     try {
       const paid = Number(amount);
       if (!Number.isFinite(paid) || Math.abs(paid - amountToCollect) > 0.01) return popup('Payment not confirmed', `Accounts must collect exactly ${formatCurrency(amountToCollect, currencySymbol)}.`);
       if (!reference.trim()) return popup('Payment not confirmed', 'Payment receipt/reference is required.');
-      if (!['CASH','CARD','UPI_QR','BANK_TRANSFER'].includes(method)) return popup('Payment not confirmed', 'Select a valid Accounts payment method.');
+      if (!['CASH', 'CARD', 'UPI_QR', 'BANK_TRANSFER'].includes(method)) return popup('Payment not confirmed', 'Select a valid Accounts payment method.');
       if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) return popup('Payment not confirmed', 'Card last 4 digits are required.');
       if ((method === 'UPI_QR' || method === 'BANK_TRANSFER') && !utr.trim()) return popup('Payment not confirmed', 'UTR / transaction ID is required.');
-      const response = await fetch(`/api/accounts/invoices/${selected.id}/confirm-payment`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, amount: paid, method, reference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null }) });
+      const response = await fetch(`/api/accounts/invoices/${selected.id}/confirm-payment`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ userId: activeUser.id, amount: paid, method, reference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null })
+      });
       if (!response.ok) return popup('Payment not confirmed', await errorText(response));
       const confirmed = await response.json() as WorkflowInvoice;
-      popup('Payment confirmed', `${confirmed.invoiceNumber || selected.invoiceNumber} is now PAYMENT_CONFIRMED and remains visible under Approved Invoices.\n\nInvoice value: ${formatCurrency(Number(confirmed.grandTotal || 0), currencySymbol)}\nManager discount: ${formatCurrency(Number(confirmed.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(confirmed.creditNoteAmount || 0), currencySymbol)}\nAmount collected: ${formatCurrency(paid, currencySymbol)}`, true);
-      onPaymentConfirmed?.(confirmed); setSelectedId(null); await load();
-    } catch (error) { popup('Payment not confirmed', error instanceof Error ? error.message : 'Unexpected error while confirming payment.'); }
+      popup('Payment confirmed', `${confirmed.invoiceNumber || 'Invoice number generated'} is now PAYMENT_CONFIRMED and locked.\n\nQuotation: ${confirmed.quotationNumber || '—'}\nInvoice: ${confirmed.invoiceNumber || '—'}\nManager discount: ${formatCurrency(Number(confirmed.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(confirmed.creditNoteAmount || 0), currencySymbol)}\nAmount collected: ${formatCurrency(paid, currencySymbol)}`, true);
+      onPaymentConfirmed?.(confirmed);
+      await load();
+    } catch (error) {
+      popup('Payment not confirmed', error instanceof Error ? error.message : 'Unexpected error while confirming payment.');
+    }
   };
-  const resolveWarehouseUser = async () => { const response = await fetch('/api/invoice-workflow/workflow-user?role=WAREHOUSE', { headers: authHeaders() }); if (!response.ok) throw new Error(await errorText(response)); const user = await response.json(); setWarehouseUserId(String(user.id)); return String(user.id); };
+
   const completeWarehouse = async () => {
     if (!selected) return;
-    try { const id = warehouseUserId || await resolveWarehouseUser(); if (!loadedBy.trim() || !verifiedBy.trim()) return setMessage('Loaded By and Verified By are required.'); const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: id, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null }) }); if (!response.ok) return setMessage(await errorText(response)); setMessage('Warehouse loading completed. Invoice is now COMPLETED.'); setSelectedId(null); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : 'Unable to complete warehouse loading.'); }
+    try {
+      if (!loadedBy.trim() || !verifiedBy.trim()) return popup('Warehouse update not saved', 'Loaded By and Verified By are required.');
+      const userResponse = await fetch('/api/invoice-workflow/workflow-user?role=WAREHOUSE', { headers: authHeaders() });
+      if (!userResponse.ok) return popup('Warehouse update not saved', await errorText(userResponse));
+      const user = await userResponse.json();
+      const response = await fetch(`/api/invoice-workflow/${selected.id}/load`, {
+        method: 'POST', headers: authHeaders(true),
+        body: JSON.stringify({ userId: user.id, loadedBy: loadedBy.trim(), verifiedBy: verifiedBy.trim(), vehicleNumber: vehicleNumber.trim() || null, remarks: warehouseRemarks.trim() || null })
+      });
+      if (!response.ok) return popup('Warehouse update not saved', await errorText(response));
+      popup('Warehouse update saved', 'Invoice is now completed.', true);
+      await load();
+    } catch (error) {
+      popup('Warehouse update not saved', error instanceof Error ? error.message : 'Unexpected error while saving.');
+    }
   };
-  const renderTabs = () => <div className="flex items-center gap-2 mb-4"><button onClick={() => setTab('unapproved')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'unapproved' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300'}`}>{isAccounts ? 'Quotations' : 'Unapproved Invoices'}</button><button onClick={() => setTab('approved')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'approved' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}>{isAccounts ? 'Invoices / Payment' : 'Approved Invoices'}</button></div>;
-  const renderManager = () => <>{renderTabs()}{invoices.map(invoice => { const editable = tab === 'unapproved' && (invoice.workflowStatus === 'MANAGER_APPROVAL_PENDING' || invoice.workflowStatus === 'MANAGER_APPROVAL_REJECTED'); const isSelected = selectedId === invoice.id; const paid = invoice.workflowStatus === 'PAYMENT_CONFIRMED' || invoice.workflowStatus === 'COMPLETED' || invoice.status === 'PAID'; return <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-3"><div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"><div className="space-y-1"><div className="flex items-center gap-2 flex-wrap"><span className="font-mono font-black text-white">{invoice.invoiceNumber}</span><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">{invoice.workflowStatus || invoice.status}</span>{paid && <Lock className="w-3.5 h-3.5 text-emerald-400" />}</div><div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div><div className="text-[11px] text-slate-400">Salesperson: {invoice.salesperson?.name || invoice.salespersonName || '—'}</div><div className="text-[11px] text-slate-400">{formatDateTime(invoice.invoiceDate)} · {invoice.lines?.length || 0} line items</div></div><div className="flex items-center gap-3"><div className="text-right"><div className="text-[10px] text-slate-500">Invoice Value</div><div className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</div></div>{editable && <button onClick={() => selectManagerInvoice(invoice)} className="px-3 py-2 bg-violet-600 hover:bg-violet-500 rounded-xl text-xs font-bold text-white">{isSelected ? 'Close' : 'Review / Approve'}</button>}</div></div>{isSelected && editable && <div className="mt-4 pt-4 border-t border-slate-800 space-y-3"><div className="grid grid-cols-1 md:grid-cols-4 gap-3"><div><label className="text-[10px] text-slate-400">Original invoice</label><div className="text-lg font-black text-white">{formatCurrency(invoice.subTotal || invoice.grandTotal, currencySymbol)}</div></div><div><label className="text-[10px] text-slate-400">Current commercial value</label><div className="text-lg font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</div></div><div><label className="text-[10px] text-slate-400">Manager discount</label><input value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} type="number" min="0" max="100" step="0.01" className={`${inputClass} w-full`} /></div><div><label className="text-[10px] text-slate-400">Credit note</label><input value={creditNoteAmount} onChange={e => setCreditNoteAmount(e.target.value)} type="number" min="0" step="0.01" className={`${inputClass} w-full`} /></div></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><textarea value={creditNoteReason} onChange={e => setCreditNoteReason(e.target.value)} placeholder="Credit note reason (required when amount > 0)" className={`${inputClass} min-h-20`} /><textarea value={managerRemarks} onChange={e => setManagerRemarks(e.target.value)} placeholder="Manager remarks" className={`${inputClass} min-h-20`} /></div><div className="rounded-xl bg-indigo-950/40 border border-indigo-500/30 p-3 text-xs text-slate-300"><div>Only Manager Discount reduces the invoice value.</div><div className="text-violet-300 mt-1">Credit Note is separate and only reduces Accounts collection.</div><div className="mt-2 font-black text-white">After decision: Invoice Value = Original − Manager Discount</div><button onClick={() => void saveManagerDecision()} className="mt-3 px-4 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-xs flex items-center gap-2"><Save className="w-4 h-4" /> Approve Invoice &amp; Send to Accounts</button></div></div>}</div>; })}</>;
-  const renderAccounts = () => <>{renderTabs()}{invoices.map(invoice => { const isSelected = selectedId === invoice.id; const net = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.creditNoteAmount || 0)); const canCollect = tab === 'approved' && invoice.workflowStatus === 'PAYMENT_PENDING'; const paid = invoice.workflowStatus === 'PAYMENT_CONFIRMED' || invoice.workflowStatus === 'COMPLETED' || invoice.status === 'PAID'; return <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-3"><div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"><div><div className="flex items-center gap-2"><div className="font-mono font-black text-white">{invoice.invoiceNumber}</div>{paid && <Lock className="w-3.5 h-3.5 text-emerald-400" />}</div><div className="text-xs text-slate-300">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div><div className="text-[11px] text-slate-400">Salesperson: {invoice.salesperson?.name || invoice.salespersonName || '—'}</div><div className="text-[11px] text-slate-400">{formatDateTime(invoice.invoiceDate)} · Status: {invoice.workflowStatus}</div></div><div className="flex items-center gap-3"><div className="text-right"><div className="text-[10px] text-slate-500">{tab === 'approved' ? 'Amount to Collect' : 'Quotation Value'}</div><div className="font-black text-white">{formatCurrency(net, currencySymbol)}</div></div>{canCollect && <button onClick={() => { setSelectedId(selectedId === invoice.id ? null : invoice.id); setAmount(String(net)); setMethod(invoice.paymentMethodRequested || 'CASH'); setReference(''); setBankName(''); setCardLast4(''); setUtr(''); setRemarks(''); }} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">{isSelected ? 'Close' : 'Confirm Payment'}</button>}</div></div>{isSelected && canCollect && <div className="mt-4 pt-4 border-t border-slate-800 space-y-3"><div className="grid grid-cols-1 md:grid-cols-4 gap-3"><div><label className="text-[10px] text-slate-400">Invoice value</label><div className="text-lg font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</div></div><div><label className="text-[10px] text-slate-400">Manager discount</label><div className="text-lg font-black text-violet-300">{formatCurrency(invoice.branchManagerDiscountAmount || 0, currencySymbol)}</div></div><div><label className="text-[10px] text-slate-400">Credit note</label><div className="text-lg font-black text-amber-300">{formatCurrency(invoice.creditNoteAmount || 0, currencySymbol)}</div></div><div><label className="text-[10px] text-slate-400">Amount to collect</label><div className="text-lg font-black text-emerald-300">{formatCurrency(net, currencySymbol)}</div></div></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><div><label className="text-[10px] text-slate-400">Payment method</label><select value={method} onChange={e => setMethod(e.target.value)} className={`${inputClass} w-full`}><option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI_QR">UPI / QR</option><option value="BANK_TRANSFER">Bank Transfer</option></select></div><div><label className="text-[10px] text-slate-400">Amount</label><input value={amount} onChange={e => setAmount(e.target.value)} type="number" step="0.01" className={`${inputClass} w-full`} /></div><div><label className="text-[10px] text-slate-400">Receipt / Reference</label><input value={reference} onChange={e => setReference(e.target.value)} className={`${inputClass} w-full`} /></div><div><label className="text-[10px] text-slate-400">Bank Name</label><input value={bankName} onChange={e => setBankName(e.target.value)} className={`${inputClass} w-full`} /></div><div><label className="text-[10px] text-slate-400">Card Last 4</label><input value={cardLast4} onChange={e => setCardLast4(e.target.value)} maxLength={4} className={`${inputClass} w-full`} /></div><div><label className="text-[10px] text-slate-400">UTR / Transaction ID</label><input value={utr} onChange={e => setUtr(e.target.value)} className={`${inputClass} w-full`} /></div></div><textarea value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Accounts remarks" className={`${inputClass} w-full min-h-20`} /><button onClick={() => void confirmPayment()} className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-2"><CreditCard className="w-4 h-4" /> Confirm Payment &amp; Create Invoice</button></div>}</div>; })}</>;
-  const renderWarehouse = () => <>{invoices.map(invoice => <div key={invoice.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-3"><div className="flex items-center justify-between"><div><div className="font-mono font-black text-white">{invoice.invoiceNumber}</div><div className="text-xs text-slate-400">{invoice.customer?.name || 'Customer'} · {invoice.workflowStatus}</div></div>{invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <button onClick={() => { setSelectedId(selectedId === invoice.id ? null : invoice.id); setLoadedBy(''); setVerifiedBy(''); setVehicleNumber(''); setWarehouseRemarks(''); }} className="px-3 py-2 bg-indigo-600 rounded-xl text-xs font-bold text-white"><PackageCheck className="inline w-3 h-3 mr-1" />{selectedId === invoice.id ? 'Close' : 'Load Invoice'}</button>}</div>{selectedId === invoice.id && invoice.workflowStatus === 'PAYMENT_CONFIRMED' && <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3"><input value={loadedBy} onChange={e => setLoadedBy(e.target.value)} placeholder="Loaded By" className={inputClass} /><input value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)} placeholder="Verified By" className={inputClass} /><input value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value)} placeholder="Vehicle Number" className={inputClass} /><textarea value={warehouseRemarks} onChange={e => setWarehouseRemarks(e.target.value)} placeholder="Warehouse remarks" className={`${inputClass} min-h-20`} /><button onClick={() => void completeWarehouse()} className="px-4 py-3 rounded-xl bg-indigo-600 text-white font-black text-xs"><Truck className="inline w-4 h-4 mr-1" />Complete Loading</button></div>}</div>)}</>;
-  return <div className="space-y-4">{loading && <div className="text-xs text-slate-400">Loading workflow...</div>}{message && <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300">{message}</div>}{isManager ? renderManager() : isAccounts ? renderAccounts() : isWarehouse ? renderWarehouse() : <div className="text-slate-500">Workflow is not available for this role.</div>}</div>;
+
+  const renderTabs = () => isManager || isAccounts ? (
+    <div className="flex items-center gap-2 mb-5">
+      <button onClick={() => setTab('unapproved')} className={`px-4 py-2.5 rounded-xl text-xs font-black ${tab === 'unapproved' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300'}`}>{isAccounts ? 'Quotations' : 'Quotations / Approval'}</button>
+      <button onClick={() => setTab('approved')} className={`px-4 py-2.5 rounded-xl text-xs font-black ${tab === 'approved' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}>{isAccounts ? 'Invoices / Payment' : 'Approved / Invoices'}</button>
+    </div>
+  ) : null;
+
+  const renderListCard = (invoice: WorkflowInvoice) => {
+    const active = selected?.id === invoice.id;
+    const editable = isManager && tab === 'unapproved' && (invoice.workflowStatus === 'MANAGER_APPROVAL_PENDING' || invoice.workflowStatus === 'MANAGER_APPROVAL_REJECTED');
+    const collectable = isAccounts && tab === 'approved' && invoice.workflowStatus === 'PAYMENT_PENDING';
+    return (
+      <button key={invoice.id} onClick={() => setSelectedId(invoice.id)} className={`w-full text-left rounded-2xl border p-4 mb-3 transition ${active ? 'border-indigo-500 bg-indigo-950/30' : 'border-slate-800 bg-slate-900 hover:border-slate-700'}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="font-mono font-black text-white text-sm">{documentNumber(invoice)}</div>
+            <div className="text-[10px] uppercase font-black tracking-wider text-indigo-300 mt-1">{documentLabel(invoice)}</div>
+            <div className="text-xs text-slate-300 mt-2">{invoice.customer?.name || 'Customer'} · {invoice.customer?.phone || 'No phone'}</div>
+            <div className="text-[11px] text-slate-400 mt-1">Salesperson: {invoice.salesperson?.name || invoice.salespersonName || '—'}</div>
+            <div className="text-[11px] text-slate-500 mt-1">{formatDateTime(invoice.invoiceDate)}</div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[10px] text-slate-500">{documentLabel(invoice)} VALUE</div>
+            <div className="font-black text-white">{formatCurrency(invoice.grandTotal, currencySymbol)}</div>
+            <span className={`inline-flex mt-2 px-2 py-1 rounded-full text-[9px] font-black ${isPaid(invoice) ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>{invoice.workflowStatus || invoice.status}</span>
+            {editable && <div className="mt-2 text-[10px] font-black text-violet-300">REVIEW / APPROVE</div>}
+            {collectable && <div className="mt-2 text-[10px] font-black text-emerald-300">COLLECT PAYMENT</div>}
+          </div>
+        </div>
+      </button>
+    );
+  };
+
+  const renderDetail = () => {
+    if (!selected) return <div className="min-h-[420px] flex items-center justify-center rounded-2xl border border-slate-800 bg-slate-900 text-slate-500">No records waiting at this stage.</div>;
+    const paid = isPaid(selected);
+    const editable = isManager && tab === 'unapproved' && (selected.workflowStatus === 'MANAGER_APPROVAL_PENDING' || selected.workflowStatus === 'MANAGER_APPROVAL_REJECTED');
+    const collectable = isAccounts && tab === 'approved' && selected.workflowStatus === 'PAYMENT_PENDING';
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
+        <div className="p-6 border-b border-slate-800 bg-slate-900/80">
+          <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+            <div>
+              <div className="text-[11px] font-black tracking-widest text-indigo-300">{documentLabel(selected)}</div>
+              <div className="text-2xl font-black text-white font-mono mt-1">{documentNumber(selected)}</div>
+              {!paid && <div className="text-xs text-slate-500 mt-1">Invoice number will be generated only after Accounts confirms payment.</div>}
+              {paid && <div className="text-xs text-emerald-300 mt-1">Payment confirmed · invoice locked</div>}
+              <div className="text-sm text-slate-300 mt-4">{selected.customer?.name || 'Customer'} · {selected.customer?.phone || 'No phone'}</div>
+              <div className="text-xs text-slate-400 mt-1">Salesperson: {selected.salesperson?.name || selected.salespersonName || '—'}</div>
+              <div className="text-xs text-slate-500 mt-1">{formatDateTime(selected.invoiceDate)}</div>
+            </div>
+            <div className="text-left xl:text-right">
+              <div className="text-[10px] text-slate-500">{documentLabel(selected)} VALUE</div>
+              <div className="text-3xl font-black text-white">{formatCurrency(selected.grandTotal, currencySymbol)}</div>
+              <span className={`inline-flex mt-2 px-3 py-1 rounded-full text-[10px] font-black ${paid ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>{selected.workflowStatus}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-5">
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">SUBTOTAL</div><div className="text-xl font-black text-white mt-1">{formatCurrency(Number(selected.subTotal || selected.grandTotal), currencySymbol)}</div></div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">DISCOUNT</div><div className="text-xl font-black text-violet-300 mt-1">{formatCurrency(Number((selected.discountAmount || 0) + (selected.promoDiscountAmount || 0) + (selected.branchManagerDiscountAmount || 0)), currencySymbol)}</div></div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="text-[10px] text-slate-500">{paid ? 'PAID' : 'PAYMENT STATUS'}</div><div className={`text-xl font-black mt-1 ${paid ? 'text-emerald-300' : 'text-amber-300'}`}>{paid ? formatCurrency(Number(selected.grandTotal || 0) - Number(selected.creditNoteAmount || 0), currencySymbol) : selected.workflowStatus === 'PAYMENT_PENDING' ? 'Awaiting Accounts' : 'Awaiting Manager'}</div>{selected.creditNoteAmount ? <div className="text-[11px] text-amber-300 mt-1">Credit note: {formatCurrency(selected.creditNoteAmount, currencySymbol)}</div> : null}</div>
+        </div>
+
+        <div className="mx-5 mb-5 overflow-hidden rounded-xl border border-slate-800">
+          <div className="grid grid-cols-[minmax(0,2fr)_80px_110px_120px] bg-slate-900 px-4 py-3 text-[10px] font-black text-slate-400 uppercase"><div>Item</div><div>Qty</div><div>Rate</div><div className="text-right">Total</div></div>
+          {selected.lines?.map(line => <div key={line.id || `${line.product?.sku}-${line.quantity}`} className="grid grid-cols-[minmax(0,2fr)_80px_110px_120px] px-4 py-3 border-t border-slate-800 text-xs text-slate-200"><div>{line.product?.name || line.product?.sku || 'Item'}</div><div>{line.quantity} {line.product?.unit || ''}</div><div>{formatCurrency(Number(line.unitPrice || 0), currencySymbol)}</div><div className="text-right font-bold">{formatCurrency(Number(line.lineTotal || 0), currencySymbol)}</div></div>)}
+        </div>
+
+        {editable && <div className="mx-5 mb-5 rounded-2xl border border-violet-500/30 bg-violet-950/20 p-5 space-y-4">
+          <div className="flex items-center gap-2 text-violet-300 font-black"><ClipboardList className="w-4 h-4" /> Manager Approval</div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div><label className="text-[10px] text-slate-400">Manager discount %</label><input value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} type="number" min="0" max="100" step="0.01" className={`${inputClass} w-full mt-1`} /></div>
+            <div><label className="text-[10px] text-slate-400">Credit note</label><input value={creditNoteAmount} onChange={e => setCreditNoteAmount(e.target.value)} type="number" min="0" step="0.01" className={`${inputClass} w-full mt-1`} /></div>
+            <textarea value={creditNoteReason} onChange={e => setCreditNoteReason(e.target.value)} placeholder="Credit note reason" className={`${inputClass} min-h-16`} />
+            <textarea value={managerRemarks} onChange={e => setManagerRemarks(e.target.value)} placeholder="Manager remarks" className={`${inputClass} min-h-16`} />
+          </div>
+          <button onClick={() => void saveManagerDecision()} className="px-5 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-xs flex items-center gap-2"><Save className="w-4 h-4" /> Approve &amp; Send to Accounts</button>
+        </div>}
+
+        {collectable && <div className="mx-5 mb-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-5 space-y-4">
+          <div className="flex items-center gap-2 text-emerald-300 font-black"><CreditCard className="w-4 h-4" /> Confirm Payment</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div><label className="text-[10px] text-slate-400">Payment method</label><select value={method} onChange={e => setMethod(e.target.value)} className={`${inputClass} w-full mt-1`}><option value="CASH">Cash</option><option value="CARD">Card</option><option value="UPI_QR">UPI / QR</option><option value="BANK_TRANSFER">Bank Transfer</option></select></div>
+            <div><label className="text-[10px] text-slate-400">Amount to collect</label><input value={amount} onChange={e => setAmount(e.target.value)} type="number" step="0.01" className={`${inputClass} w-full mt-1`} /></div>
+            <input value={reference} onChange={e => setReference(e.target.value)} placeholder="Payment receipt/reference" className={inputClass} />
+            <input value={bankName} onChange={e => setBankName(e.target.value)} placeholder="Bank name (if applicable)" className={inputClass} />
+            <input value={cardLast4} onChange={e => setCardLast4(e.target.value)} placeholder="Card last 4 digits" maxLength={4} className={inputClass} />
+            <input value={utr} onChange={e => setUtr(e.target.value)} placeholder="UTR / transaction ID" className={inputClass} />
+          </div>
+          <textarea value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Accounts remarks" className={`${inputClass} w-full min-h-16`} />
+          <button onClick={() => void confirmPayment()} className="w-full px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4" /> Confirm Payment &amp; Generate Invoice</button>
+        </div>}
+
+        {isWarehouse && <div className="mx-5 mb-5 rounded-2xl border border-sky-500/30 bg-sky-950/20 p-5 space-y-4"><div className="flex items-center gap-2 text-sky-300 font-black"><Truck className="w-4 h-4" /> Warehouse Completion</div><div className="grid grid-cols-1 md:grid-cols-3 gap-3"><input value={loadedBy} onChange={e => setLoadedBy(e.target.value)} placeholder="Loaded By" className={inputClass} /><input value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)} placeholder="Verified By" className={inputClass} /><input value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value)} placeholder="Vehicle Number" className={inputClass} /></div><textarea value={warehouseRemarks} onChange={e => setWarehouseRemarks(e.target.value)} placeholder="Warehouse remarks" className={`${inputClass} w-full min-h-16`} /><button onClick={() => void completeWarehouse()} className="px-5 py-3 rounded-xl bg-sky-500 text-slate-950 font-black text-xs">Complete Loading</button></div>}
+
+        {paid && <div className="mx-5 mb-5 rounded-xl border border-emerald-500/20 bg-emerald-950/10 p-4 text-xs text-slate-300 flex items-center gap-2"><Lock className="w-4 h-4 text-emerald-400" /> Payment confirmed. Invoice <span className="font-mono font-black text-white">{selected.invoiceNumber || '—'}</span> is locked and quotation <span className="font-mono text-slate-400">{selected.quotationNumber || '—'}</span> remains available for reference.</div>}
+      </div>
+    );
+  };
+
+  return (
+    <div className="w-full max-w-[1500px] mx-auto p-4 lg:p-6">
+      {renderTabs()}
+      {message && <div className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-950/30 px-4 py-3 text-xs text-indigo-200">{message}</div>}
+      {loading ? <div className="min-h-[420px] flex items-center justify-center text-slate-400">Loading workflow records...</div> : (
+        <div className="grid grid-cols-1 xl:grid-cols-[390px_minmax(0,1fr)] gap-5 items-start">
+          <div className="min-w-0">{invoices.length ? invoices.map(renderListCard) : <div className="rounded-2xl border border-slate-800 bg-slate-900 p-10 text-center text-slate-500">No records waiting at this stage.</div>}</div>
+          <div className="min-w-0">{renderDetail()}</div>
+        </div>
+      )}
+    </div>
+  );
 };
