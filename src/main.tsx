@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { LoginView } from './components/LoginView';
 import { Storage, hydrateProductsFromServer } from './lib/storage';
+import { hydrateInvoicesFromServer } from './lib/invoiceHydration';
 import { UserProfile } from './types';
 import './index.css';
 import './modern-pos.css';
@@ -53,16 +54,32 @@ function AuthenticatedApp() {
       return null;
     }
   });
+  const [hydrating, setHydrating] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
-    const users = Storage.getUsers();
-    Storage.saveUsers([user, ...users.filter(existing => existing.id !== user.id)]);
-    Storage.saveActiveUserId(user.id);
-    void hydrateProductsFromServer();
+    if (!user) {
+      setHydrating(false);
+      return;
+    }
+
+    let cancelled = false;
+    const hydrate = async () => {
+      const users = Storage.getUsers();
+      Storage.saveUsers([user, ...users.filter(existing => existing.id !== user.id)]);
+      Storage.saveActiveUserId(user.id);
+      await Promise.allSettled([
+        hydrateProductsFromServer(),
+        hydrateInvoicesFromServer()
+      ]);
+      if (!cancelled) setHydrating(false);
+    };
+
+    void hydrate();
+    return () => { cancelled = true; };
   }, [user]);
 
   if (!user) return <LoginView onLogin={setUser} />;
+  if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center text-sm font-semibold">Loading billing data...</div>;
 
   const users = Storage.getUsers();
   const nextUsers = [user, ...users.filter(existing => existing.id !== user.id)];
