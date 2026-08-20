@@ -2,13 +2,10 @@ import React, { useState } from 'react';
 import { LogIn } from 'lucide-react';
 import { UserProfile, UserRole } from '../types';
 
-interface LoginViewProps {
-  onLogin: (user: UserProfile) => void;
-}
+interface LoginViewProps { onLogin: (user: UserProfile) => void; }
 
 const normalizeRole = (role: string): UserRole => {
-  if (role === 'ACCOUNTS') return 'ACCOUNTANT';
-  if (role === 'ACCOUNTANT') return 'ACCOUNTANT';
+  if (role === 'ACCOUNTS' || role === 'ACCOUNTANT') return 'ACCOUNTANT';
   if (role === 'BRANCH_MANAGER') return 'BRANCH_MANAGER';
   if (role === 'BILLING_USER') return 'BILLING_USER';
   if (role === 'CASHIER') return 'CASHIER';
@@ -47,8 +44,10 @@ export function LoginView({ onLogin }: LoginViewProps) {
         phone: undefined
       };
 
-      localStorage.setItem('avasurface_auth_token', data.token);
-      localStorage.setItem('avasurface_auth_user', JSON.stringify(user));
+      sessionStorage.setItem('avasurface_auth_token', data.token);
+      sessionStorage.setItem('avasurface_auth_user', JSON.stringify(user));
+      localStorage.removeItem('avasurface_auth_token');
+      localStorage.removeItem('avasurface_auth_user');
       onLogin(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed.');
