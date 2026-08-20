@@ -35,6 +35,7 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
         if (method == "CARD" && !System.Text.RegularExpressions.Regex.IsMatch(request.CardLast4 ?? string.Empty, "^\\d{4}$")) return BadRequest("Card last 4 digits are required.");
         if (method is "UPI_QR" or "BANK_TRANSFER" && string.IsNullOrWhiteSpace(request.Utr)) return BadRequest("UTR / transaction ID is required.");
 
+        var originalInvoiceValue = Math.Max(0m, Math.Round(invoice.GrandTotal + invoice.BranchManagerDiscountAmount, 2, MidpointRounding.AwayFromZero));
         var netReceivable = Math.Max(0m, invoice.GrandTotal - invoice.CreditNoteAmount);
         if (Math.Abs(request.Amount - netReceivable) > 0.01m)
             return BadRequest($"Payment amount must exactly match the Accounts collection amount of {netReceivable:0.00}. Invoice value is {invoice.GrandTotal:0.00}, manager discount is {invoice.BranchManagerDiscountAmount:0.00}, and credit note is {invoice.CreditNoteAmount:0.00}.");
@@ -70,7 +71,7 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
                 Action = "INVOICE_PAYMENT_CONFIRMED",
                 EntityName = nameof(Invoice),
                 EntityId = invoice.Id,
-                Details = $"Accounts collected {request.Amount:0.00}; invoice value {invoice.GrandTotal:0.00}; manager discount {invoice.BranchManagerDiscountAmount:0.00}; credit note {invoice.CreditNoteAmount:0.00}; amount to collect {netReceivable:0.00}; method {method}; reference {request.Reference.Trim()}."
+                Details = $"Accounts collected {request.Amount:0.00}; original invoice value {originalInvoiceValue:0.00}; final invoice value {invoice.GrandTotal:0.00}; manager discount {invoice.BranchManagerDiscountPercent:0.##}% ({invoice.BranchManagerDiscountAmount:0.00}); credit note {invoice.CreditNoteAmount:0.00}; amount to collect {netReceivable:0.00}; method {method}; reference {request.Reference.Trim()}."
             });
 
             await db.SaveChangesAsync(cancellationToken);
@@ -86,8 +87,10 @@ public sealed class AccountsPaymentController(BillingDbContext db) : ControllerB
         {
             invoice.Id,
             invoice.InvoiceNumber,
+            OriginalInvoiceValue = originalInvoiceValue,
             invoice.GrandTotal,
-            ManagerDiscountAmount = invoice.BranchManagerDiscountAmount,
+            BranchManagerDiscountPercent = invoice.BranchManagerDiscountPercent,
+            BranchManagerDiscountAmount = invoice.BranchManagerDiscountAmount,
             CreditNoteAmount = invoice.CreditNoteAmount,
             AmountCollected = request.Amount,
             AmountToCollect = netReceivable,
