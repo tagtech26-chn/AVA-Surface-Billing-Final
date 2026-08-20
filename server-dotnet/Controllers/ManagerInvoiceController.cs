@@ -16,13 +16,13 @@ public sealed class ManagerInvoiceController(BillingDbContext db) : ControllerBa
     public async Task<ActionResult<IEnumerable<Invoice>>> GetAll(CancellationToken cancellationToken)
         => Ok(await QueryInvoices().OrderByDescending(x => x.InvoiceDate).ThenByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
 
-    [HttpGet("unpaid")]
-    public async Task<ActionResult<IEnumerable<Invoice>>> GetUnpaid(CancellationToken cancellationToken)
-        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus != "PAYMENT_CONFIRMED" && x.WorkflowStatus != "COMPLETED" && x.Status != "PAID").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
+    [HttpGet("unapproved")]
+    public async Task<ActionResult<IEnumerable<Invoice>>> GetUnapproved(CancellationToken cancellationToken)
+        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "MANAGER_APPROVAL_PENDING" || x.WorkflowStatus == "MANAGER_APPROVAL_REJECTED").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
 
-    [HttpGet("paid")]
-    public async Task<ActionResult<IEnumerable<Invoice>>> GetPaid(CancellationToken cancellationToken)
-        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "PAYMENT_CONFIRMED" || x.WorkflowStatus == "COMPLETED" || x.Status == "PAID").OrderByDescending(x => x.InvoiceDate).ToListAsync(cancellationToken));
+    [HttpGet("approved")]
+    public async Task<ActionResult<IEnumerable<Invoice>>> GetApproved(CancellationToken cancellationToken)
+        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "PAYMENT_PENDING" || x.WorkflowStatus == "PAYMENT_CONFIRMED" || x.WorkflowStatus == "COMPLETED").OrderByDescending(x => x.InvoiceDate).ThenByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
 
     [HttpGet("{invoiceId:guid}")]
     public async Task<ActionResult> Get(Guid invoiceId, CancellationToken cancellationToken)
@@ -95,19 +95,11 @@ public sealed class ManagerInvoiceController(BillingDbContext db) : ControllerBa
         }
         catch (DbUpdateException ex)
         {
-            return StatusCode(StatusCodes.Status500InternalServerError, new
-            {
-                message = "Manager decision could not be saved to the database.",
-                detail = ex.InnerException?.Message ?? ex.Message
-            });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Manager decision could not be saved to the database.", detail = ex.InnerException?.Message ?? ex.Message });
         }
         catch (Exception ex)
         {
-            return StatusCode(StatusCodes.Status500InternalServerError, new
-            {
-                message = "Manager decision failed unexpectedly.",
-                detail = ex.InnerException?.Message ?? ex.Message
-            });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Manager decision failed unexpectedly.", detail = ex.InnerException?.Message ?? ex.Message });
         }
     }
 
