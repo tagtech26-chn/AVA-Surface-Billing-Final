@@ -35,9 +35,9 @@ public sealed class ManagerInvoiceController(BillingDbContext db) : ControllerBa
     public async Task<ActionResult> SaveDecision(Guid invoiceId, ManagerDecisionRequest request, CancellationToken cancellationToken)
     {
         var managerId = GetAuthenticatedUserId();
-        if (!managerId.HasValue || request.UserId != managerId.Value) return Forbid();
+        if (!managerId.HasValue) return Unauthorized();
 
-        var manager = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == managerId.Value && x.IsActive && (x.Role == "MANAGER" || x.Role == "BRANCH_MANAGER" || x.Role == "ADMIN"), cancellationToken);
+        var manager = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == managerId.Value && x.IsActive && (x.Role == "MANAGER" || x.Role == "BRANCH_MANAGER" || x.Role == "ADMIN"), cancellationToken);
         if (manager is null) return Forbid();
 
         var invoice = await db.Invoices.Include(x => x.Lines).ThenInclude(x => x.Product).FirstOrDefaultAsync(x => x.Id == invoiceId, cancellationToken);
@@ -48,7 +48,7 @@ public sealed class ManagerInvoiceController(BillingDbContext db) : ControllerBa
         if (request.AdditionalDiscountPercent < 0m || request.AdditionalDiscountPercent > 100m)
             return BadRequest("Additional discount must be between 0% and 100%.");
         if (request.CreditNoteAmount < 0m) return BadRequest("Credit note amount cannot be negative.");
-        if (request.CreditNoteAmount > invoice.GrandTotal) return BadRequest("Credit note cannot exceed the final commercial invoice value.");
+        if (request.CreditNoteAmount > invoice.GrandTotal) return BadRequest("Credit note amount cannot exceed the current invoice value.");
         if (request.CreditNoteAmount > 0m && string.IsNullOrWhiteSpace(request.CreditNoteReason)) return BadRequest("Credit note reason is required when a credit note is flagged.");
 
         var bases = invoice.Lines.Select(line => new
@@ -108,6 +108,7 @@ public sealed class ManagerInvoiceController(BillingDbContext db) : ControllerBa
             EntityId = invoice.Id,
             Details = $"Manager discount {invoice.BranchManagerDiscountPercent:0.##}% ({invoice.BranchManagerDiscountAmount:0.00}); credit note {invoice.CreditNoteAmount:0.00}; final commercial invoice value {invoice.GrandTotal:0.00}."
         });
+
         await db.SaveChangesAsync(cancellationToken);
         return Ok(ToManagerDto(invoice));
     }
