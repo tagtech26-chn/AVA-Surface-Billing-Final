@@ -17,6 +17,7 @@ public sealed class InitialUserPasswordSeeder(BillingDbContext db, IWebHostEnvir
         ["billing"] = "Billing@123",
         ["branchmanager"] = "Manager@123",
         ["accounts"] = "Accounts@123",
+        ["accountant"] = "Accountant@123",
         ["warehouse"] = "Warehouse@123",
         ["admin"] = "Admin@123"
     };
@@ -29,8 +30,6 @@ public sealed class InitialUserPasswordSeeder(BillingDbContext db, IWebHostEnvir
             if (user is null || !user.IsActive)
                 continue;
 
-            // Local/demo accounts must remain usable after an older database seed has
-            // left an incompatible or stale PasswordHash behind.
             if (environment.IsDevelopment())
                 user.PasswordHash = PasswordHasher.Hash(pair.Value);
             else if (string.IsNullOrWhiteSpace(user.PasswordHash))
