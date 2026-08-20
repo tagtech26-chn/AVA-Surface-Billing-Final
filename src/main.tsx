@@ -17,65 +17,45 @@ function clearAuth() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
   localStorage.removeItem('bizflow_active_user_id_v1');
+  localStorage.removeItem('bizflow_active_user_id');
 }
 
 function installAuthenticatedFetch() {
   const originalFetch = window.fetch.bind(window);
-
   window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const isLoginRequest = url.includes('/api/auth/login');
     const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-
     if (!token || isLoginRequest) return originalFetch(input, init);
-
     const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
     headers.set('Authorization', `Bearer ${token}`);
-
-    // Keep this outside the try/catch so it is also available to the network-error path.
     const isManagerDecision = url.includes('/api/manager/invoices/') && url.endsWith('/decision');
     const isPaymentConfirmation = url.includes('/api/accounts/invoices/') && url.endsWith('/confirm-payment');
     const isWorkflowWrite = method !== 'GET' && (isManagerDecision || isPaymentConfirmation);
-
     try {
       const response = await originalFetch(input, { ...init, headers });
-
       if (response.status === 401) {
         clearAuth();
         window.location.reload();
         return response;
       }
-
-      // Give workflow operations an unavoidable browser popup. This makes backend
-      // validation/database failures visible even when the component is scrolled.
       if (isWorkflowWrite && !response.ok) {
         let detail = `HTTP ${response.status}`;
         try {
           const body = await response.clone().text();
           if (body) {
-            try {
-              const parsed = JSON.parse(body) as { message?: string; detail?: string; title?: string; errors?: unknown };
-              detail = parsed.message || parsed.detail || parsed.title || body;
-            } catch {
-              detail = body;
-            }
+            try { const parsed = JSON.parse(body) as { message?: string; detail?: string; title?: string }; detail = parsed.message || parsed.detail || parsed.title || body; }
+            catch { detail = body; }
           }
-        } catch {
-          // Keep the HTTP status when the response body cannot be read.
-        }
+        } catch { /* keep HTTP status */ }
         window.alert(`SAVE FAILED\n\n${detail}`);
       } else if (isWorkflowWrite && response.ok) {
-        window.alert(isManagerDecision
-          ? 'SUCCESS\n\nManager discount and credit note were saved successfully.'
-          : 'SUCCESS\n\nPayment was confirmed and the invoice was locked successfully.');
+        window.alert(isManagerDecision ? 'SUCCESS\n\nManager discount and credit note were saved successfully.' : 'SUCCESS\n\nPayment was confirmed and the invoice was locked successfully.');
       }
-
       return response;
     } catch (error) {
-      if (isWorkflowWrite) {
-        window.alert(`SAVE FAILED\n\n${error instanceof Error ? error.message : String(error)}`);
-      }
+      if (isWorkflowWrite) window.alert(`SAVE FAILED\n\n${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   };
@@ -97,26 +77,28 @@ function AuthenticatedApp() {
   const [hydrating, setHydrating] = useState(true);
 
   useEffect(() => {
-    if (!user) {
-      setHydrating(false);
-      return;
-    }
+    if (!user) { setHydrating(false); return; }
     let active = true;
     (async () => {
-      try {
-        await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer()]);
-      } finally {
-        if (active) setHydrating(false);
-      }
+      try { await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer()]); }
+      finally { if (active) setHydrating(false); }
     })();
     return () => { active = false; };
   }, [user]);
 
   if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading BizFlow...</div>;
   if (!user) return <LoginView onLogin={(profile) => {
+    // LoginView has just received a fresh server-issued identity. Persist it only
+    // in the current browser session; never revive a previous local seeded user.
+    Storage.saveActiveUserId(profile.id);
     setUser(profile);
   }} />;
-  return <App activeUser={user} onLogout={() => { clearAuth(); setUser(null); }} />;
+
+  return <App activeUser={user} onLogout={() => {
+    clearAuth();
+    setUser(null);
+    setHydrating(false);
+  }} />;
 }
 
 createRoot(document.getElementById('root')!).render(
