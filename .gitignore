@@ -7,3 +7,9 @@ server-data/
 *.log
 .env*
 !.env.example
+
+server-dotnet/bin/
+server-dotnet/obj/
+
+server-dotnet/bin/
+server-dotnet/obj/
