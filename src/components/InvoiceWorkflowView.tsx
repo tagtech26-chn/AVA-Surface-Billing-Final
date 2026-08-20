@@ -41,6 +41,12 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [warehouseRemarks, setWarehouseRemarks] = useState('');
 
+  const popup = (title: string, text: string, success = false) => {
+    const prefix = success ? 'SUCCESS' : 'ERROR';
+    window.alert(`${prefix}: ${title}\n\n${text}`);
+    setMessage(`${title}: ${text}`);
+  };
+
   const load = async () => {
     setLoading(true); setMessage('');
     try {
@@ -71,31 +77,40 @@ export const InvoiceWorkflowView: React.FC<Props> = ({ activeUser, currencySymbo
 
   const saveManagerDecision = async () => {
     if (!selected) return;
-    const discount = Number(discountPercent || 0);
-    const credit = Number(creditNoteAmount || 0);
-    if (!Number.isFinite(discount) || discount < 0 || discount > 100) return setMessage('Additional discount must be between 0% and 100%.');
-    if (!Number.isFinite(credit) || credit < 0) return setMessage('Credit note amount cannot be negative.');
-    if (credit > Number(selected.grandTotal || 0)) return setMessage('Credit note cannot exceed the final commercial invoice value.');
-    if (credit > 0 && !creditNoteReason.trim()) return setMessage('Credit note reason is required.');
-    const response = await fetch(`/api/manager/invoices/${selected.id}/decision`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, additionalDiscountPercent: discount, creditNoteAmount: credit, creditNoteReason: credit > 0 ? creditNoteReason.trim() : null, remarks: managerRemarks.trim() || null }) });
-    if (!response.ok) return setMessage(await errorText(response));
-    setMessage('Manager decision saved. Invoice is now ready for Accounts.');
-    setSelectedId(null); await load();
+    try {
+      const discount = Number(discountPercent || 0);
+      const credit = Number(creditNoteAmount || 0);
+      if (!Number.isFinite(discount) || discount < 0 || discount > 100) return popup('Manager decision not saved', 'Additional discount must be between 0% and 100%.');
+      if (!Number.isFinite(credit) || credit < 0) return popup('Manager decision not saved', 'Credit note amount cannot be negative.');
+      if (credit > Number(selected.grandTotal || 0)) return popup('Manager decision not saved', 'Credit note cannot exceed the final commercial invoice value.');
+      if (credit > 0 && !creditNoteReason.trim()) return popup('Manager decision not saved', 'Credit note reason is required.');
+      const response = await fetch(`/api/manager/invoices/${selected.id}/decision`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, additionalDiscountPercent: discount, creditNoteAmount: credit, creditNoteReason: credit > 0 ? creditNoteReason.trim() : null, remarks: managerRemarks.trim() || null }) });
+      if (!response.ok) return popup('Manager decision not saved', await errorText(response));
+      const saved = await response.json() as WorkflowInvoice;
+      popup('Manager decision saved', `${saved.invoiceNumber || selected.invoiceNumber} is now ready for Accounts.\n\nInvoice value: ${formatCurrency(Number(saved.grandTotal || 0), currencySymbol)}\nManager discount: ${formatCurrency(Number(saved.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(saved.creditNoteAmount || 0), currencySymbol)}\nAmount to collect: ${formatCurrency(Math.max(0, Number(saved.grandTotal || 0) - Number(saved.creditNoteAmount || 0)), currencySymbol)}`, true);
+      setSelectedId(null); await load();
+    } catch (error) {
+      popup('Manager decision not saved', error instanceof Error ? error.message : 'Unexpected error while saving the manager decision.');
+    }
   };
 
   const confirmPayment = async () => {
     if (!selected) return;
-    const paid = Number(amount);
-    if (!Number.isFinite(paid) || Math.abs(paid - amountToCollect) > 0.01) return setMessage(`Accounts must collect exactly ${formatCurrency(amountToCollect, currencySymbol)}.`);
-    if (!reference.trim()) return setMessage('Payment receipt/reference is required.');
-    if (!['CASH','CARD','UPI_QR','BANK_TRANSFER'].includes(method)) return setMessage('Select a valid Accounts payment method.');
-    if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) return setMessage('Card last 4 digits are required.');
-    if ((method === 'UPI_QR' || method === 'BANK_TRANSFER') && !utr.trim()) return setMessage('UTR / transaction ID is required.');
-    const response = await fetch(`/api/accounts/invoices/${selected.id}/confirm-payment`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, amount: paid, method, reference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null }) });
-    if (!response.ok) return setMessage(await errorText(response));
-    const confirmed = await response.json() as WorkflowInvoice;
-    setMessage('Payment confirmed. Manager discount and credit note are now locked.');
-    onPaymentConfirmed?.(confirmed); setSelectedId(null); await load();
+    try {
+      const paid = Number(amount);
+      if (!Number.isFinite(paid) || Math.abs(paid - amountToCollect) > 0.01) return popup('Payment not confirmed', `Accounts must collect exactly ${formatCurrency(amountToCollect, currencySymbol)}.`);
+      if (!reference.trim()) return popup('Payment not confirmed', 'Payment receipt/reference is required.');
+      if (!['CASH','CARD','UPI_QR','BANK_TRANSFER'].includes(method)) return popup('Payment not confirmed', 'Select a valid Accounts payment method.');
+      if (method === 'CARD' && !/^\d{4}$/.test(cardLast4)) return popup('Payment not confirmed', 'Card last 4 digits are required.');
+      if ((method === 'UPI_QR' || method === 'BANK_TRANSFER') && !utr.trim()) return popup('Payment not confirmed', 'UTR / transaction ID is required.');
+      const response = await fetch(`/api/accounts/invoices/${selected.id}/confirm-payment`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ userId: activeUser.id, amount: paid, method, reference: reference.trim(), bankName: bankName.trim() || null, cardLast4: cardLast4.trim() || null, utr: utr.trim() || null, remarks: remarks.trim() || null }) });
+      if (!response.ok) return popup('Payment not confirmed', await errorText(response));
+      const confirmed = await response.json() as WorkflowInvoice;
+      popup('Payment confirmed', `${confirmed.invoiceNumber || selected.invoiceNumber} is now PAYMENT_CONFIRMED and locked.\n\nInvoice value: ${formatCurrency(Number(confirmed.grandTotal || 0), currencySymbol)}\nManager discount: ${formatCurrency(Number(confirmed.branchManagerDiscountAmount || 0), currencySymbol)}\nCredit note: ${formatCurrency(Number(confirmed.creditNoteAmount || 0), currencySymbol)}\nAmount collected: ${formatCurrency(paid, currencySymbol)}`, true);
+      onPaymentConfirmed?.(confirmed); setSelectedId(null); await load();
+    } catch (error) {
+      popup('Payment not confirmed', error instanceof Error ? error.message : 'Unexpected error while confirming payment.');
+    }
   };
 
   const resolveWarehouseUser = async () => {
