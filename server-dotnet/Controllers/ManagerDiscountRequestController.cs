@@ -59,7 +59,8 @@ public sealed class ManagerDiscountRequestController(BillingDbContext db) : Cont
         invoice.BranchManagerDiscountPercent = 0m;
         invoice.BranchManagerDiscountAmount = 0m;
         invoice.BranchManagerUserId = null;
-        invoice.BranchManagerRemarks = string.IsNullOrWhiteSpace(request.Remarks) ? null : request.Remarks.Trim();
+        var remarks = string.IsNullOrWhiteSpace(request.Remarks) ? request.Reason : request.Remarks;
+        invoice.BranchManagerRemarks = string.IsNullOrWhiteSpace(remarks) ? null : remarks.Trim();
 
         db.AuditLogs.Add(new AuditLog
         {
@@ -80,5 +81,5 @@ public sealed class ManagerDiscountRequestController(BillingDbContext db) : Cont
         return Guid.TryParse(value, out var userId) ? userId : null;
     }
 
-    public sealed record ManagerDiscountRequest(string? RequestedByName, string? Remarks);
+    public sealed record ManagerDiscountRequest(string? RequestedByName, string? Remarks = null, string? Reason = null);
 }
