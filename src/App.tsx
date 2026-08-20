@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
 import { Product, Customer, PromoRule, Invoice, Expense, UserProfile, BusinessStoreDetails, StockAdjustment, PaymentMethod, DeliveryStatus, AuditLog, AuditCategory, AuditSeverity } from './types';
 import { Storage } from './lib/storage';
+import { hydrateInvoicesFromServer } from './lib/invoiceHydration';
 import { createAuditEntry } from './lib/auditLogger';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
@@ -44,6 +45,17 @@ export default function App() {
   useEffect(() => { Storage.saveStoreDetails(storeDetails); }, [storeDetails]);
   useEffect(() => { Storage.saveStockLogs(stockLogs); }, [stockLogs]);
   useEffect(() => { Storage.saveAuditLogs(auditLogs); }, [auditLogs]);
+
+  // Load the authoritative backend invoice history after authentication.
+  // The hydration function merges SQL Server invoices with the existing local
+  // cache, so invoices created before the backend migration are not discarded.
+  useEffect(() => {
+    let cancelled = false;
+    void hydrateInvoicesFromServer().then((hydrated) => {
+      if (!cancelled && hydrated.length > 0) setInvoices(hydrated);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const logAudit = (category: AuditCategory, severity: AuditSeverity, action: string, details: string, targetName?: string, targetId?: string, previousValue?: string, newValue?: string) => {
     const entry = createAuditEntry(category, severity, action, details, activeUser, targetName, targetId, previousValue, newValue);
@@ -116,7 +128,7 @@ export default function App() {
   const handleUpdateEWayDetails = (invoiceId: string, ewayBillNo: string, irnNo: string, ackNo: string) => setInvoices((prev) => prev.map((inv) => inv.id === invoiceId ? { ...inv, ewayBillNo, ewayBillDate: new Date().toISOString(), irnNo, ackNo, ackDate: new Date().toISOString() } : inv));
   const handleAddNewCustomer = (newCustData: Omit<Customer, 'id' | 'loyaltyPoints' | 'totalSpent' | 'outstandingBalance'>): Customer => { const newCust: Customer = { ...newCustData, id: `cust-${Date.now()}`, loyaltyPoints: 0, totalSpent: 0, outstandingBalance: 0 }; setCustomers((prev) => [...prev, newCust]); return newCust; };
   const handleSaveProduct = (product: Product) => { const existing = products.find((p) => p.id === product.id); if (existing) { const priceChanged = existing.sellingPrice !== product.sellingPrice || existing.costPrice !== product.costPrice; logAudit('PRODUCT', priceChanged ? 'HIGH' : 'MEDIUM', priceChanged ? 'Product Price Modified' : 'Product Details Updated', priceChanged ? `Updated selling price of ${product.name} from ${storeDetails.currencySymbol}${existing.sellingPrice} to ${storeDetails.currencySymbol}${product.sellingPrice}.` : `Updated product attributes for ${product.name}.`, product.name, product.id, `${storeDetails.currencySymbol}${existing.sellingPrice}`, `${storeDetails.currencySymbol}${product.sellingPrice}`); } else logAudit('PRODUCT', 'MEDIUM', 'New Product Created', `Created product entry ${product.name} (SKU: ${product.sku}) with selling price ${storeDetails.currencySymbol}${product.sellingPrice}.`, product.name, product.id, 'Non-Existent', `${storeDetails.currencySymbol}${product.sellingPrice}`); setProducts((prev) => prev.some((p) => p.id === product.id) ? prev.map((p) => p.id === product.id ? product : p) : [product, ...prev]); };
-  const handleStockAdjustment = (adjustment: StockAdjustment) => { setStockLogs((prev) => [adjustment, ...prev]); logAudit('STOCK', 'MEDIUM', 'Physical Inventory Stock Adjustment', `Adjusted stock for ${adjustment.productName}. Change: ${adjustment.quantityChange > 0 ? '+' : ''}${adjustment.quantityChange} units (${adjustment.reason}).`, adjustment.productName, adjustment.productId, 'Adjustment Type', `${adjustment.type} (${adjustment.quantityChange > 0 ? '+' : ''}${adjustment.quantityChange})`); };
+  const handleStockAdjustment = (adjustment: StockAdjustment) => { setStockLogs((prev) => [adjustment, ...prev]); logAudit('STOCK', 'MEDIUM', 'Physical Inventory Stock Adjustment', `Adjusted stock for ${adjustment.productName}. Change: ${adjustment.quantityChange > 0 ? '+' : ''}${adjustment.quantityChange} units (${adjustment.reason}).`, adjustment.productName, adjustment.productId, 'Adjustment Type', `${adjustment.type} (${adjustment.quantityChange > 0 ? '+' : ''}${adjustment.type} (${adjustment.quantityChange})`); };
   const handleSavePromo = (promo: PromoRule) => { const existing = promos.find((p) => p.id === promo.id); logAudit('PROMO', 'MEDIUM', existing ? 'Promo Offer Updated' : 'New Promo Offer Created', `Saved promo rule ${promo.code} (${promo.description}).`, promo.code, promo.id); setPromos((prev) => prev.some((p) => p.id === promo.id) ? prev.map((p) => p.id === promo.id ? promo : p) : [promo, ...prev]); };
   const handleTogglePromoActive = (promoId: string) => { const target = promos.find((p) => p.id === promoId); if (target) { const nextState = !target.isActive; logAudit('PROMO', 'MEDIUM', nextState ? 'Promo Offer Activated' : 'Promo Offer Deactivated', `${nextState ? 'Enabled' : 'Disabled'} promo code ${target.code}.`, target.code, target.id, target.isActive ? 'Active' : 'Inactive', nextState ? 'Active' : 'Inactive'); } setPromos((prev) => prev.map((p) => p.id === promoId ? { ...p, isActive: !p.isActive } : p)); };
   const handleRecordInvoicePayment = (invoiceId: string, paymentAmount: number, method: PaymentMethod, notes?: string) => { const targetInv = invoices.find((i) => i.id === invoiceId); logAudit('INVOICE', 'MEDIUM', 'Invoice AR Payment Received', `Recorded payment of ${storeDetails.currencySymbol}${paymentAmount.toFixed(2)} via ${method} for invoice ${targetInv?.invoiceNumber || invoiceId}.`, targetInv?.invoiceNumber || invoiceId, invoiceId); setInvoices((prev) => prev.map((inv) => { if (inv.id !== invoiceId) return inv; const newAmountPaid = inv.amountPaid + paymentAmount; const newStatus = newAmountPaid >= inv.grandTotal ? 'PAID' : 'PARTIAL'; return { ...inv, amountPaid: newAmountPaid, status: newStatus, paymentsHistory: [...inv.paymentsHistory, { id: `pay-${Date.now()}`, amount: paymentAmount, method, date: new Date().toISOString(), notes: notes || 'AR Payment Received' }] }; })); };
