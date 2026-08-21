@@ -54,7 +54,14 @@ function AuthenticatedApp() {
     if (!user) { setHydrating(false); return; }
     let active=true;
     (async()=>{
-      try { setStartupError(''); await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer(), hydrateCustomersFromServer()]); }
+      try {
+        setStartupError('');
+        // Keep the authenticated DB identity authoritative inside the legacy App shell.
+        // This prevents a refresh from resolving activeUser from an old local admin entry.
+        Storage.saveUsers([user]);
+        Storage.saveActiveUserId(user.id);
+        await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer(), hydrateCustomersFromServer()]);
+      }
       catch(error) { console.error('Authoritative DB hydration failed:', error); if(active) setStartupError(error instanceof Error ? error.message : 'Unable to load business data from the database.'); }
       finally { if(active) setHydrating(false); }
     })();
