@@ -68,13 +68,10 @@ function AuthenticatedApp() {
   if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading SQL Server data...</div>;
   if (startupError) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6"><div className="max-w-xl w-full rounded-2xl border border-red-500/30 bg-slate-900 p-6"><h1 className="text-lg font-black text-red-300">Database data could not be loaded</h1><p className="text-sm text-slate-300 mt-3">{startupError}</p><button onClick={()=>window.location.reload()} className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold">Retry</button></div></div>;
 
-  // App.tsx still resolves some legacy UI state from Storage during its initial render.
-  // Persist the authenticated DB identity before rendering that shell so refresh cannot
-  // instantiate the old Admin user and then overwrite the authenticated role.
   Storage.saveUsers([user]);
   Storage.saveActiveUserId(user.id);
 
-  return <App activeUser={user} onLogout={()=>{clearAuth();setUser(null);setHydrating(false);Storage.resetToDefaultSeed();}} />;
+  return <App activeUser={user} onLogout={()=>{clearAuth();setUser(null);setHydrating(false);}} />;
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><AuthenticatedApp /></StrictMode>);
