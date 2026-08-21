@@ -4,8 +4,8 @@ import {
 } from '../types';
 import { INITIAL_STORE_DETAILS } from '../data/seedData';
 
-// Business data is intentionally kept in React/module memory only.
-// SQL Server/API is the authoritative source. sessionStorage is reserved for auth.
+// Legacy compatibility state only. Business persistence belongs to the SQL Server APIs.
+// sessionStorage is reserved for authentication/session data.
 let products: Product[] = [];
 let customers: Customer[] = [];
 let invoices: Invoice[] = [];
@@ -18,9 +18,8 @@ let stockLogs: StockAdjustment[] = [];
 let drafts: DraftBill[] = [];
 let auditLogs: AuditLog[] = [];
 let managerDiscountApprovals: ManagerDiscountApproval[] = [];
-let productServerAvailable = false;
 
-export function setProductsFromServer(value: Product[]): void { products = [...value]; productServerAvailable = true; }
+export function setProductsFromServer(value: Product[]): void { products = [...value]; }
 export function setCustomersFromServer(value: Customer[]): void { customers = [...value]; }
 export function setInvoicesFromServer(value: Invoice[]): void { invoices = [...value]; }
 export function setPromosFromServer(value: PromoRule[]): void { promos = [...value]; }
@@ -53,7 +52,8 @@ export async function hydrateProductsFromServer(): Promise<void> {
 
 export const Storage = {
   getProducts(): Product[] { return [...products]; },
-  saveProducts(value: Product[]): void { products = [...value]; if (productServerAvailable) void syncProducts(value); },
+  // Intentionally memory-only. Product persistence must go through the authenticated API.
+  saveProducts(value: Product[]): void { products = [...value]; },
   getCustomers(): Customer[] { return [...customers]; },
   saveCustomers(value: Customer[]): void { customers = [...value]; },
   getPromos(): PromoRule[] { return [...promos]; },
@@ -81,18 +81,5 @@ export const Storage = {
     products = []; customers = []; invoices = []; promos = []; expenses = []; users = [];
     activeUserId = ''; storeDetails = { ...INITIAL_STORE_DETAILS };
     stockLogs = []; drafts = []; auditLogs = []; managerDiscountApprovals = [];
-    productServerAvailable = false;
   }
 };
-
-async function syncProducts(value: Product[]): Promise<void> {
-  try {
-    const response = await fetch('/api/products/sync', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(value.map(p => ({ id: p.id, sku: p.sku, name: p.name, hsnCode: p.hsnCode,
-        unit: p.unit, costPrice: p.costPrice, sellingPrice: p.sellingPrice, stock: p.stock,
-        reorderLevel: p.reorderLevel, taxRate: p.taxRate })))
-    });
-    if (!response.ok) console.error(`Product sync HTTP ${response.status}`);
-  } catch (error) { console.error('Product server sync failed.', error); }
-}
