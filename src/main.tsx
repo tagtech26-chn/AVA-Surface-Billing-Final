@@ -4,12 +4,13 @@ import App from './App.tsx';
 import { LoginView } from './components/LoginView';
 import { Storage, hydrateProductsFromServer } from './lib/storage';
 import { hydrateInvoicesFromServer } from './lib/invoiceHydration';
-import { UserProfile } from './types';
+import { UserProfile, Customer } from './types';
 import './index.css';
 import './modern-pos.css';
 
 const AUTH_TOKEN_KEY = 'avasurface_auth_token';
 const AUTH_USER_KEY = 'avasurface_auth_user';
+const CUSTOMER_CACHE_KEY = 'bizflow_customers_v1';
 
 function clearAuth() {
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
@@ -61,6 +62,58 @@ function installAuthenticatedFetch() {
   };
 }
 
+async function hydrateCustomersFromServer(): Promise<void> {
+  try {
+    const response = await fetch('/api/customers');
+    if (!response.ok) throw new Error(`Customer API HTTP ${response.status}`);
+    const rows = await response.json() as Array<{
+      id: string;
+      name: string;
+      phone?: string | null;
+      email?: string | null;
+      gstin?: string | null;
+      address?: string | null;
+      billingAddress?: string | null;
+      shippingAddress?: string | null;
+      city?: string | null;
+      state?: string | null;
+      stateCode?: string | null;
+      customerType?: string;
+      isActive?: boolean;
+    }>;
+
+    const customers: Customer[] = rows
+      .filter((row) => row.isActive !== false)
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        phone: row.phone || '',
+        email: row.email || undefined,
+        customerType: row.customerType?.toUpperCase() === 'B2B' ? 'LEDGER' : 'NORMAL',
+        gstNumber: row.gstin || undefined,
+        address: row.address || undefined,
+        billingAddress: row.billingAddress || undefined,
+        shippingAddress: row.shippingAddress || undefined,
+        city: row.city || undefined,
+        state: row.state || undefined,
+        stateCode: row.stateCode || undefined,
+        loyaltyPoints: 0,
+        totalSpent: 0,
+        outstandingBalance: 0
+      }));
+
+    // DB is authoritative. The local key is only updated with the fresh DB
+    // snapshot and is never used as the source when the application starts.
+    localStorage.setItem(CUSTOMER_CACHE_KEY, JSON.stringify(customers));
+    console.info(`SQL Server customer working set ready: ${customers.length} customers.`);
+  } catch (error) {
+    // Never fall back to stale/seed customers when the database cannot be read.
+    localStorage.setItem(CUSTOMER_CACHE_KEY, JSON.stringify([]));
+    console.error('Customer API unavailable; cleared local customer cache.', error);
+    throw error;
+  }
+}
+
 installAuthenticatedFetch();
 
 function AuthenticatedApp() {
@@ -80,8 +133,17 @@ function AuthenticatedApp() {
     if (!user) { setHydrating(false); return; }
     let active = true;
     (async () => {
-      try { await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer()]); }
-      finally { if (active) setHydrating(false); }
+      try {
+        await Promise.all([
+          hydrateProductsFromServer(),
+          hydrateInvoicesFromServer(),
+          hydrateCustomersFromServer()
+        ]);
+      } catch (error) {
+        console.error('Authoritative DB hydration failed:', error);
+      } finally {
+        if (active) setHydrating(false);
+      }
     })();
     return () => { active = false; };
   }, [user]);
