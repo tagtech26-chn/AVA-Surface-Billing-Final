@@ -13,6 +13,14 @@ function getAuthToken(): string | null {
   return null;
 }
 
+function authHeaders(includeJson = false): HeadersInit {
+  const token = getAuthToken();
+  return {
+    ...(includeJson ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
+}
+
 export function createAuditEntry(
   category: AuditCategory,
   severity: AuditSeverity,
@@ -24,7 +32,7 @@ export function createAuditEntry(
   previousValue?: string,
   newValue?: string
 ): AuditLog {
-  const entry: AuditLog = {
+  return {
     id: generateId('audit'),
     timestamp: new Date().toISOString(),
     category,
@@ -39,41 +47,56 @@ export function createAuditEntry(
     newValue,
     ipAddress: undefined
   };
-
-  void persistAuditEntry(entry);
-  return entry;
 }
 
-async function persistAuditEntry(entry: AuditLog): Promise<void> {
-  try {
-    const token = getAuthToken();
-    if (!token) return;
+export async function loadAuditLogs(): Promise<AuditLog[]> {
+  const response = await fetch('/api/audit-logs', {
+    headers: authHeaders()
+  });
 
-    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5080').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/api/audit-logs`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        category: entry.category,
-        severity: entry.severity,
-        action: entry.action,
-        details: entry.details,
-        performedBy: entry.performedBy,
-        performedByRole: entry.performedByRole,
-        targetName: entry.targetName,
-        targetId: entry.targetId,
-        previousValue: entry.previousValue,
-        newValue: entry.newValue,
-        ipAddress: entry.ipAddress,
-        timestamp: entry.timestamp
-      })
-    });
+  if (!response.ok) {
+    throw new Error(`Audit log API HTTP ${response.status}`);
+  }
 
-    if (!response.ok) console.error(`Audit log API HTTP ${response.status}`);
-  } catch (error) {
-    console.error('Audit log persistence failed:', error);
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) return [];
+  return payload as AuditLog[];
+}
+
+export async function saveAuditLog(entry: AuditLog): Promise<AuditLog> {
+  const response = await fetch('/api/audit-logs', {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify({
+      category: entry.category,
+      severity: entry.severity,
+      action: entry.action,
+      details: entry.details,
+      performedBy: entry.performedBy,
+      performedByRole: entry.performedByRole,
+      targetName: entry.targetName,
+      targetId: entry.targetId,
+      previousValue: entry.previousValue,
+      newValue: entry.newValue,
+      ipAddress: entry.ipAddress,
+      timestamp: entry.timestamp
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Audit log save failed: HTTP ${response.status}`);
+  }
+
+  return await response.json() as AuditLog;
+}
+
+export async function purgeAuditLogs(): Promise<void> {
+  const response = await fetch('/api/audit-logs', {
+    method: 'DELETE',
+    headers: authHeaders()
+  });
+
+  if (!response.ok) {
+    throw new Error(`Audit log purge failed: HTTP ${response.status}`);
   }
 }
