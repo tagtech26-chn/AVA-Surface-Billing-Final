@@ -18,6 +18,7 @@ let stockLogs: StockAdjustment[] = [];
 let drafts: DraftBill[] = [];
 let auditLogs: AuditLog[] = [];
 let managerDiscountApprovals: ManagerDiscountApproval[] = [];
+const persistedDraftIds = new Set<string>();
 
 export function setProductsFromServer(value: Product[]): void { products = [...value]; }
 export function setCustomersFromServer(value: Customer[]): void { customers = [...value]; }
@@ -42,6 +43,36 @@ function normalizeProductResponse(payload: any): any[] {
   return [];
 }
 
+function mapDraft(row: any): DraftBill {
+  try {
+    const payload = typeof row.payloadJson === 'string' ? JSON.parse(row.payloadJson) : row.payloadJson;
+    if (payload && typeof payload === 'object') {
+      return {
+        ...payload,
+        id: row.id,
+        createdAt: row.createdAtUtc,
+        customerType: row.customerType || payload.customerType || 'NORMAL',
+        savedBy: row.savedBy || payload.savedBy || '',
+        totalAmount: Number(row.totalAmount ?? payload.totalAmount ?? 0),
+        totalWeightKg: Number(row.totalWeightKg ?? payload.totalWeightKg ?? 0)
+      } as DraftBill;
+    }
+  } catch {
+    // Preserve an empty-but-valid draft rather than falling back to local data.
+  }
+  return {
+    id: row.id,
+    createdAt: row.createdAtUtc,
+    customer: undefined,
+    customerType: row.customerType || 'NORMAL',
+    cartItems: [],
+    notes: undefined,
+    savedBy: row.savedBy || '',
+    totalAmount: Number(row.totalAmount || 0),
+    totalWeightKg: Number(row.totalWeightKg || 0)
+  };
+}
+
 export async function hydrateProductsFromServer(): Promise<void> {
   const response = await fetch('/api/products?page=1&pageSize=100');
   if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
@@ -50,9 +81,61 @@ export async function hydrateProductsFromServer(): Promise<void> {
   console.info(`SQL Server product working set ready: ${products.length} products.`);
 }
 
+export async function hydrateDraftsFromServer(): Promise<void> {
+  const response = await fetch('/api/drafts');
+  if (!response.ok) throw new Error(`Draft API HTTP ${response.status}`);
+  const rows = await response.json();
+  drafts = Array.isArray(rows) ? rows.map(mapDraft) : [];
+  persistedDraftIds.clear();
+  drafts.forEach((draft) => persistedDraftIds.add(draft.id));
+  console.info(`SQL Server held-bill working set ready: ${drafts.length} drafts.`);
+}
+
+function persistDraftsToServer(next: DraftBill[], previous: DraftBill[]): void {
+  const previousIds = new Set(previous.map((draft) => draft.id));
+  const nextIds = new Set(next.map((draft) => draft.id));
+
+  for (const draft of next) {
+    if (!persistedDraftIds.has(draft.id)) {
+      const payload = JSON.stringify(draft);
+      void fetch('/api/drafts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: draft.id,
+          customerId: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(draft.customer?.id || '') ? draft.customer?.id : null,
+          customerName: draft.customer?.name || null,
+          customerPhone: draft.customer?.phone || null,
+          customerType: draft.customerType,
+          payloadJson: payload,
+          savedBy: draft.savedBy,
+          totalAmount: draft.totalAmount,
+          totalWeightKg: draft.totalWeightKg,
+          createdAtUtc: draft.createdAt
+        })
+      }).then((response) => {
+        if (!response.ok) throw new Error(`Draft API HTTP ${response.status}`);
+        persistedDraftIds.add(draft.id);
+      }).catch((error) => {
+        console.error('Draft save failed:', error);
+      });
+    }
+  }
+
+  for (const draft of previous) {
+    if (previousIds.has(draft.id) && !nextIds.has(draft.id) && persistedDraftIds.has(draft.id)) {
+      void fetch(`/api/drafts/${encodeURIComponent(draft.id)}`, { method: 'DELETE' })
+        .then((response) => {
+          if (!response.ok && response.status !== 404) throw new Error(`Draft delete HTTP ${response.status}`);
+          persistedDraftIds.delete(draft.id);
+        })
+        .catch((error) => console.error('Draft delete failed:', error));
+    }
+  }
+}
+
 export const Storage = {
   getProducts(): Product[] { return [...products]; },
-  // Intentionally memory-only. Product persistence must go through the authenticated API.
   saveProducts(value: Product[]): void { products = [...value]; },
   getCustomers(): Customer[] { return [...customers]; },
   saveCustomers(value: Customer[]): void { customers = [...value]; },
@@ -71,7 +154,11 @@ export const Storage = {
   getStockLogs(): StockAdjustment[] { return [...stockLogs]; },
   saveStockLogs(value: StockAdjustment[]): void { stockLogs = [...value]; },
   getDrafts(): DraftBill[] { return [...drafts]; },
-  saveDrafts(value: DraftBill[]): void { drafts = [...value]; },
+  saveDrafts(value: DraftBill[]): void {
+    const previous = [...drafts];
+    drafts = [...value];
+    persistDraftsToServer(drafts, previous);
+  },
   getManagerDiscountApprovals(): ManagerDiscountApproval[] { return [...managerDiscountApprovals]; },
   saveManagerDiscountApprovals(value: ManagerDiscountApproval[]): void { managerDiscountApprovals = [...value]; },
   getPendingManagerDiscountApprovals(): ManagerDiscountApproval[] { return managerDiscountApprovals.filter(x => x.status === 'PENDING'); },
@@ -81,5 +168,6 @@ export const Storage = {
     products = []; customers = []; invoices = []; promos = []; expenses = []; users = [];
     activeUserId = ''; storeDetails = { ...INITIAL_STORE_DETAILS };
     stockLogs = []; drafts = []; auditLogs = []; managerDiscountApprovals = [];
+    persistedDraftIds.clear();
   }
 };
