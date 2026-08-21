@@ -55,6 +55,7 @@ const ASPNET_PROXY_PREFIXES = [
   "/api/companies",
   "/api/products",
   "/api/promotions",
+  "/api/stock",
   "/api/salespersons",
   "/api/gst-verification",
   "/api/manager",
