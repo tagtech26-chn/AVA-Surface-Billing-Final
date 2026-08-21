@@ -1,13 +1,12 @@
 import { Invoice, PaymentMethod, Product, Customer, CartItem } from '../types';
-
-const INVOICE_STORAGE_KEY = 'bizflow_invoices_v1';
-const AUTH_TOKEN_KEY = 'avasurface_auth_token';
+import { setInvoicesFromServer } from './storage';
 
 type ServerInvoice = {
-  id: string; invoiceNumber?: string | null; quotationNumber?: string | null; invoiceDate: string; salespersonName?: string; salespersonMobile?: string;
-  subTotal?: number; subtotal?: number; discountAmount?: number; promoDiscountAmount?: number;
-  branchManagerDiscountPercent?: number; branchManagerDiscountAmount?: number; branchManagerRemarks?: string;
-  taxAmount?: number; taxableAmount?: number; cgstAmount?: number; sgstAmount?: number; igstAmount?: number; roundOffAmount?: number; grandTotal: number;
+  id: string; invoiceNumber?: string | null; quotationNumber?: string | null; invoiceDate: string;
+  salespersonName?: string; salespersonMobile?: string; subTotal?: number; subtotal?: number;
+  discountAmount?: number; promoDiscountAmount?: number; branchManagerDiscountPercent?: number;
+  branchManagerDiscountAmount?: number; branchManagerRemarks?: string; taxAmount?: number; taxableAmount?: number;
+  cgstAmount?: number; sgstAmount?: number; igstAmount?: number; roundOffAmount?: number; grandTotal: number;
   status?: string; workflowStatus?: string; creditNoteAmount?: number; creditNoteReason?: string;
   paymentMethodRequested?: string; paymentMethodConfirmed?: string; paymentConfirmedAtUtc?: string; paymentSpecificReference?: string;
   customer?: { id: string; name?: string; phone?: string; email?: string; gstin?: string; billingAddress?: string; shippingAddress?: string; city?: string; state?: string; stateCode?: string };
@@ -16,44 +15,17 @@ type ServerInvoice = {
   payments?: Array<{ id: string; amount: number; method: string; reference?: string; paymentDateUtc?: string }>;
 };
 
-type InvoiceApiResponse = ServerInvoice[] | { items?: ServerInvoice[]; value?: ServerInvoice[]; count?: number; totalCount?: number };
+type InvoiceApiResponse = ServerInvoice[] | { items?: ServerInvoice[]; value?: ServerInvoice[] };
 const number = (value: unknown): number => { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : 0; };
-const normalizeServerInvoices = (payload: InvoiceApiResponse): ServerInvoice[] => Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : Array.isArray(payload.value) ? payload.value : [];
-
-function mapCustomer(customer?: ServerInvoice['customer']): Customer | undefined {
-  if (!customer) return undefined;
-  return { id: customer.id, name: customer.name || 'Customer', phone: customer.phone || '', email: customer.email, gstNumber: customer.gstin, address: customer.billingAddress, billingAddress: customer.billingAddress, shippingAddress: customer.shippingAddress, city: customer.city, state: customer.state, stateCode: customer.stateCode, loyaltyPoints: 0, totalSpent: 0, outstandingBalance: 0 };
-}
-function mapLine(line: NonNullable<ServerInvoice['lines']>[number]): CartItem {
-  const serverProduct = line.product;
-  const product: Product = { id: line.productId, sku: serverProduct?.sku || line.productId, barcode: serverProduct?.sku || line.productId, name: serverProduct?.name || 'Item', category: 'General', costPrice: 0, sellingPrice: number(line.unitPrice), stock: number(serverProduct?.stock), reorderLevel: number(serverProduct?.reorderLevel), taxRate: number(serverProduct?.gstRate), unit: serverProduct?.unit || 'unit', hsnCode: serverProduct?.hsnCode, updatedAt: new Date().toISOString() };
-  return { product, quantity: number(line.quantity), inputQuantity: number(line.quantity), selectedUnit: undefined, discountAmount: number(line.discountAmount), discountPercent: number(line.discountPercent), finalUnitPrice: number(line.unitPrice), totalPrice: number(line.lineTotal) };
-}
-function mapInvoice(source: ServerInvoice): Invoice {
-  const payments = (source.payments || []).map((payment) => ({ id: payment.id, amount: number(payment.amount), method: (payment.method || source.paymentMethodConfirmed || source.paymentMethodRequested || 'CASH') as PaymentMethod, referenceNumber: payment.reference, date: payment.paymentDateUtc || source.paymentConfirmedAtUtc || source.invoiceDate }));
-  const amountPaid = payments.reduce((sum, payment) => sum + payment.amount, 0);
-  const status = source.status === 'PAID' || source.workflowStatus === 'PAYMENT_CONFIRMED' || source.workflowStatus === 'COMPLETED' ? 'PAID' : amountPaid > 0 ? 'PARTIAL' : 'UNPAID';
-  const documentNumber = source.invoiceNumber?.trim() || source.quotationNumber?.trim() || '';
-  return {
-    id: source.id, invoiceNumber: documentNumber, quotationNumber: source.quotationNumber?.trim() || undefined, date: source.invoiceDate, customer: mapCustomer(source.customer), cashierName: 'Billing', cashierRole: 'BILLING_USER',
-    salespersonName: source.salespersonName || source.salesperson?.name, salespersonMobile: source.salespersonMobile || source.salesperson?.mobile, items: (source.lines || []).map(mapLine),
-    subtotal: number(source.subTotal ?? source.subtotal), itemDiscountsTotal: number(source.discountAmount), promoDiscountAmount: number(source.promoDiscountAmount),
-    branchManagerDiscountPercent: number(source.branchManagerDiscountPercent), branchManagerDiscountAmount: number(source.branchManagerDiscountAmount), branchManagerRemarks: source.branchManagerRemarks, manualDiscountAmount: number(source.branchManagerDiscountAmount),
-    taxTotal: number(source.taxableAmount ? number(source.cgstAmount) + number(source.sgstAmount) + number(source.igstAmount) : source.taxAmount), cgstAmount: number(source.cgstAmount), sgstAmount: number(source.sgstAmount), igstAmount: number(source.igstAmount), roundOffAmount: number(source.roundOffAmount), grandTotal: number(source.grandTotal),
-    amountPaid, changeGiven: 0, status, paymentMethod: (source.paymentMethodConfirmed || source.paymentMethodRequested || 'CASH') as PaymentMethod, paymentsHistory: payments, deliveryStatus: 'PENDING_DISPATCH',
-    workflowStatus: source.workflowStatus, creditNoteAmount: number(source.creditNoteAmount), creditNoteReason: source.creditNoteReason, paymentConfirmedAtUtc: source.paymentConfirmedAtUtc, paymentMethodConfirmed: source.paymentMethodConfirmed as PaymentMethod | undefined, paymentSpecificReference: source.paymentSpecificReference
-  };
-}
+const normalize = (payload: InvoiceApiResponse): ServerInvoice[] => Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : Array.isArray(payload.value) ? payload.value : [];
+function mapCustomer(c?: ServerInvoice['customer']): Customer | undefined { if (!c) return undefined; return { id:c.id,name:c.name||'Customer',phone:c.phone||'',email:c.email,gstNumber:c.gstin,address:c.billingAddress,billingAddress:c.billingAddress,shippingAddress:c.shippingAddress,city:c.city,state:c.state,stateCode:c.stateCode,loyaltyPoints:0,totalSpent:0,outstandingBalance:0 }; }
+function mapLine(l: NonNullable<ServerInvoice['lines']>[number]): CartItem { const p=l.product; const product:Product={id:l.productId,sku:p?.sku||l.productId,barcode:p?.sku||l.productId,name:p?.name||'Item',category:'General',costPrice:0,sellingPrice:number(l.unitPrice),stock:number(p?.stock),reorderLevel:number(p?.reorderLevel),taxRate:number(p?.gstRate),unit:p?.unit||'PCS',hsnCode:p?.hsnCode,updatedAt:new Date().toISOString()}; return {product,quantity:number(l.quantity),inputQuantity:number(l.quantity),selectedUnit:undefined,discountAmount:number(l.discountAmount),discountPercent:number(l.discountPercent),finalUnitPrice:number(l.unitPrice),totalPrice:number(l.lineTotal)}; }
+function mapInvoice(s:ServerInvoice):Invoice { const payments=(s.payments||[]).map(p=>({id:p.id,amount:number(p.amount),method:(p.method||s.paymentMethodConfirmed||s.paymentMethodRequested||'CASH') as PaymentMethod,referenceNumber:p.reference,date:p.paymentDateUtc||s.paymentConfirmedAtUtc||s.invoiceDate})); const amountPaid=payments.reduce((x,p)=>x+p.amount,0); const status=s.status==='PAID'||s.workflowStatus==='PAYMENT_CONFIRMED'||s.workflowStatus==='COMPLETED'?'PAID':amountPaid>0?'PARTIAL':'UNPAID'; return {id:s.id,invoiceNumber:s.invoiceNumber?.trim()||s.quotationNumber?.trim()||'',quotationNumber:s.quotationNumber?.trim()||undefined,date:s.invoiceDate,customer:mapCustomer(s.customer),cashierName:'Billing',cashierRole:'BILLING_USER',salespersonName:s.salespersonName||s.salesperson?.name,salespersonMobile:s.salespersonMobile||s.salesperson?.mobile,items:(s.lines||[]).map(mapLine),subtotal:number(s.subTotal??s.subtotal),itemDiscountsTotal:number(s.discountAmount),promoDiscountAmount:number(s.promoDiscountAmount),branchManagerDiscountPercent:number(s.branchManagerDiscountPercent),branchManagerDiscountAmount:number(s.branchManagerDiscountAmount),branchManagerRemarks:s.branchManagerRemarks,manualDiscountAmount:number(s.branchManagerDiscountAmount),taxTotal:number(s.taxableAmount?number(s.cgstAmount)+number(s.sgstAmount)+number(s.igstAmount):s.taxAmount),cgstAmount:number(s.cgstAmount),sgstAmount:number(s.sgstAmount),igstAmount:number(s.igstAmount),roundOffAmount:number(s.roundOffAmount),grandTotal:number(s.grandTotal),amountPaid,changeGiven:0,status,paymentMethod:(s.paymentMethodConfirmed||s.paymentMethodRequested||'CASH') as PaymentMethod,paymentsHistory:payments,deliveryStatus:'PENDING_DISPATCH',workflowStatus:s.workflowStatus,creditNoteAmount:number(s.creditNoteAmount),creditNoteReason:s.creditNoteReason,paymentConfirmedAtUtc:s.paymentConfirmedAtUtc,paymentMethodConfirmed:s.paymentMethodConfirmed as PaymentMethod|undefined,paymentSpecificReference:s.paymentSpecificReference}; }
 
 export async function hydrateInvoicesFromServer(): Promise<Invoice[]> {
-  if (typeof window === 'undefined') return [];
-  const localInvoices = (() => { try { const raw = localStorage.getItem(INVOICE_STORAGE_KEY); return raw ? JSON.parse(raw) as Invoice[] : []; } catch { return []; } })();
-  if (!sessionStorage.getItem(AUTH_TOKEN_KEY)) return localInvoices;
-  try {
-    const response = await fetch('/api/invoices/history'); if (!response.ok) throw new Error(`Invoice API HTTP ${response.status}`);
-    const payload = await response.json() as InvoiceApiResponse; const serverInvoices = normalizeServerInvoices(payload).map(mapInvoice);
-    const merged = new Map<string, Invoice>(); for (const invoice of localInvoices) merged.set(invoice.id || invoice.invoiceNumber, invoice); for (const invoice of serverInvoices) merged.set(invoice.id || invoice.invoiceNumber, invoice);
-    const invoices = Array.from(merged.values()).sort((a, b) => (Date.parse(b.date || '') || 0) - (Date.parse(a.date || '') || 0));
-    localStorage.setItem(INVOICE_STORAGE_KEY, JSON.stringify(invoices)); return invoices;
-  } catch (error) { console.warn('Invoice history API unavailable; retaining existing local invoice cache.', error); return localInvoices; }
+  const response=await fetch('/api/invoices/history');
+  if(!response.ok) throw new Error(`Invoice API HTTP ${response.status}`);
+  const invoices=normalize(await response.json() as InvoiceApiResponse).map(mapInvoice).sort((a,b)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0));
+  setInvoicesFromServer(invoices);
+  return invoices;
 }
