@@ -15,11 +15,37 @@ public sealed class DraftBillsController(BillingDbContext db) : ControllerBase
     private Guid? CurrentUserId =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : null;
 
+    private async Task EnsureTableAsync(CancellationToken cancellationToken)
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID(N'dbo.DraftBills', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.DraftBills
+    (
+        Id uniqueidentifier NOT NULL CONSTRAINT PK_DraftBills PRIMARY KEY,
+        UserId uniqueidentifier NOT NULL,
+        CustomerId uniqueidentifier NULL,
+        CustomerName nvarchar(200) NOT NULL,
+        CustomerPhone nvarchar(50) NOT NULL,
+        CustomerType nvarchar(20) NOT NULL,
+        PayloadJson nvarchar(max) NOT NULL,
+        SavedBy nvarchar(150) NOT NULL,
+        TotalAmount decimal(18,2) NOT NULL,
+        TotalWeightKg decimal(18,3) NOT NULL,
+        CreatedAtUtc datetime2 NOT NULL CONSTRAINT DF_DraftBills_CreatedAtUtc DEFAULT SYSUTCDATETIME()
+    );
+    CREATE INDEX IX_DraftBills_UserId_CreatedAtUtc
+        ON dbo.DraftBills(UserId, CreatedAtUtc DESC);
+END", cancellationToken);
+    }
+
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
         var userId = CurrentUserId;
         if (!userId.HasValue) return Unauthorized();
+
+        await EnsureTableAsync(cancellationToken);
 
         var rows = await db.DraftBills.AsNoTracking()
             .Where(x => x.UserId == userId.Value)
@@ -36,6 +62,8 @@ public sealed class DraftBillsController(BillingDbContext db) : ControllerBase
         if (!userId.HasValue) return Unauthorized();
         if (string.IsNullOrWhiteSpace(request.PayloadJson))
             return BadRequest(new { message = "Draft payload is required." });
+
+        await EnsureTableAsync(cancellationToken);
 
         var user = await db.AppUsers.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == userId.Value && x.IsActive, cancellationToken);
@@ -73,6 +101,8 @@ public sealed class DraftBillsController(BillingDbContext db) : ControllerBase
     {
         var userId = CurrentUserId;
         if (!userId.HasValue) return Unauthorized();
+
+        await EnsureTableAsync(cancellationToken);
 
         var entity = await db.DraftBills.FirstOrDefaultAsync(x => x.Id == id && x.UserId == userId.Value, cancellationToken);
         if (entity is null) return NotFound(new { message = "Held bill not found." });
