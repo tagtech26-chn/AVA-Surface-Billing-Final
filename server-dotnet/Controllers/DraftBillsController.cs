@@ -41,8 +41,16 @@ public sealed class DraftBillsController(BillingDbContext db) : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == userId.Value && x.IsActive, cancellationToken);
         if (user is null) return Unauthorized();
 
+        var existing = request.Id.HasValue
+            ? await db.DraftBills.FirstOrDefaultAsync(x => x.Id == request.Id.Value && x.UserId == user.Id, cancellationToken)
+            : null;
+
+        if (existing is not null)
+            return Ok(ToDto(existing));
+
         var entity = new DraftBill
         {
+            Id = request.Id.GetValueOrDefault() == Guid.Empty ? Guid.NewGuid() : request.Id!.Value,
             UserId = user.Id,
             CustomerId = request.CustomerId,
             CustomerName = request.CustomerName?.Trim() ?? string.Empty,
@@ -87,6 +95,7 @@ public sealed class DraftBillsController(BillingDbContext db) : ControllerBase
         row.TotalWeightKg);
 
     public sealed record CreateDraftRequest(
+        Guid? Id,
         Guid? CustomerId,
         string? CustomerName,
         string? CustomerPhone,
