@@ -5,13 +5,15 @@ import { UserProfile, UserRole } from '../types';
 interface LoginViewProps { onLogin: (user: UserProfile) => void; }
 
 const normalizeRole = (role: string): UserRole => {
-  if (role === 'ACCOUNTS' || role === 'ACCOUNTANT') return 'ACCOUNTANT';
-  if (role === 'BRANCH_MANAGER') return 'BRANCH_MANAGER';
-  if (role === 'BILLING_USER') return 'BILLING_USER';
-  if (role === 'CASHIER') return 'CASHIER';
-  if (role === 'WAREHOUSE') return 'WAREHOUSE';
-  if (role === 'MANAGER') return 'MANAGER';
-  return 'ADMIN';
+  const normalized = String(role || '').trim().toUpperCase();
+  if (normalized === 'ACCOUNTS' || normalized === 'ACCOUNTANT') return 'ACCOUNTANT';
+  if (normalized === 'BRANCH_MANAGER') return 'BRANCH_MANAGER';
+  if (normalized === 'BILLING_USER') return 'BILLING_USER';
+  if (normalized === 'CASHIER') return 'CASHIER';
+  if (normalized === 'WAREHOUSE') return 'WAREHOUSE';
+  if (normalized === 'MANAGER') return 'MANAGER';
+  if (normalized === 'ADMIN') return 'ADMIN';
+  throw new Error(`Login rejected: unsupported user role '${role || 'empty'}'.`);
 };
 
 export function LoginView({ onLogin }: LoginViewProps) {
@@ -32,6 +34,7 @@ export function LoginView({ onLogin }: LoginViewProps) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Login failed.');
+      if (!data.token || !data.id || !data.userName || !data.role) throw new Error('Login failed: server returned an incomplete user identity.');
 
       const user: UserProfile = {
         id: data.id,
