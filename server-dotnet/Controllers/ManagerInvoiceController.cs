@@ -18,11 +18,34 @@ public sealed class ManagerInvoiceController(BillingDbContext db) : ControllerBa
 
     [HttpGet("unapproved")]
     public async Task<ActionResult<IEnumerable<Invoice>>> GetUnapproved(CancellationToken cancellationToken)
-        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "MANAGER_APPROVAL_PENDING" || x.WorkflowStatus == "MANAGER_APPROVAL_REJECTED").OrderBy(x => x.InvoiceDate).ToListAsync(cancellationToken));
+    {
+        // Every unpaid quotation remains in the manager quotation queue until the manager makes a decision.
+        // A decision stamps BranchManagerUserId, which removes the quotation from this queue and leaves it
+        // with Accounts for payment confirmation. Explicit pending/rejected manager requests stay visible.
+        var rows = await QueryInvoices()
+            .Where(x =>
+                (x.WorkflowStatus == "PAYMENT_PENDING" && x.BranchManagerUserId == null) ||
+                x.WorkflowStatus == "MANAGER_APPROVAL_PENDING" ||
+                x.WorkflowStatus == "MANAGER_APPROVAL_REJECTED")
+            .OrderBy(x => x.InvoiceDate)
+            .ThenBy(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        // Initial payment-pending quotations have not yet been reviewed by a manager.
+        foreach (var row in rows.Where(x => x.WorkflowStatus == "PAYMENT_PENDING" && x.BranchManagerUserId == null))
+            row.WorkflowStatus = "MANAGER_APPROVAL_PENDING";
+
+        return Ok(rows);
+    }
 
     [HttpGet("approved")]
     public async Task<ActionResult<IEnumerable<Invoice>>> GetApproved(CancellationToken cancellationToken)
-        => Ok(await QueryInvoices().Where(x => x.WorkflowStatus == "PAYMENT_PENDING" || x.WorkflowStatus == "PAYMENT_CONFIRMED" || x.WorkflowStatus == "COMPLETED").OrderByDescending(x => x.InvoiceDate).ThenByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
+        // Manager's Approved / Invoices tab contains only payment-confirmed/final documents.
+        => Ok(await QueryInvoices()
+            .Where(x => x.WorkflowStatus == "PAYMENT_CONFIRMED" || x.WorkflowStatus == "COMPLETED" || x.Status == "PAID")
+            .OrderByDescending(x => x.InvoiceDate)
+            .ThenByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken));
 
     [HttpGet("{invoiceId:guid}")]
     public async Task<ActionResult> Get(Guid invoiceId, CancellationToken cancellationToken)
@@ -109,6 +132,7 @@ public sealed class ManagerInvoiceController(BillingDbContext db) : ControllerBa
     {
         invoice.Id,
         invoice.InvoiceNumber,
+        invoice.QuotationNumber,
         invoice.InvoiceDate,
         invoice.SubTotal,
         invoice.DiscountAmount,
