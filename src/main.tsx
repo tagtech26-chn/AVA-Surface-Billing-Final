@@ -2,9 +2,9 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { LoginView } from './components/LoginView';
-import { Storage, hydrateProductsFromServer, setCustomersFromServer } from './lib/storage';
+import { Storage, hydrateProductsFromServer, setCustomersFromServer, setPromosFromServer } from './lib/storage';
 import { hydrateInvoicesFromServer } from './lib/invoiceHydration';
-import { UserProfile, Customer } from './types';
+import { UserProfile, Customer, PromoRule } from './types';
 import './index.css';
 import './modern-pos.css';
 
@@ -40,6 +40,24 @@ async function hydrateCustomersFromServer(): Promise<Customer[]> {
   return result;
 }
 
+async function hydratePromosFromServer(): Promise<void> {
+  const response = await fetch('/api/promotions');
+  if (!response.ok) throw new Error(`Promotion API HTTP ${response.status}`);
+  const rows = await response.json() as Array<{
+    id:string; code:string; name:string; discountPercent:number; maxDiscountPercent?:number|null;
+    productCategory?:string|null; customerType?:string|null; isCombinable:boolean; isActive:boolean;
+    validFrom:string; validTo:string; priority:number; remarks?:string|null;
+  }>;
+  const promos: PromoRule[] = rows.filter(r=>r.isActive!==false).map(r=>({
+    id:r.id, code:r.code, title:r.name, description:r.remarks || '', discountType:'PERCENTAGE',
+    discountValue:Number(r.discountPercent||0), minOrderValue:0,
+    maxDiscountAmount:r.maxDiscountPercent == null ? undefined : Number(r.maxDiscountPercent),
+    validFrom:r.validFrom, validUntil:r.validTo, isActive:true, autoApply:false, usageCount:0,
+    targetCategory:r.productCategory || undefined
+  }));
+  setPromosFromServer(promos);
+}
+
 installAuthenticatedFetch();
 
 function AuthenticatedApp() {
@@ -56,7 +74,7 @@ function AuthenticatedApp() {
     (async()=>{
       try {
         setStartupError('');
-        await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer(), hydrateCustomersFromServer()]);
+        await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer(), hydrateCustomersFromServer(), hydratePromosFromServer()]);
       }
       catch(error) { console.error('Authoritative DB hydration failed:', error); if(active) setStartupError(error instanceof Error ? error.message : 'Unable to load business data from the database.'); }
       finally { if(active) setHydrating(false); }
