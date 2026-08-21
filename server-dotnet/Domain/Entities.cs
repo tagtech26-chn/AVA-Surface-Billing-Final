@@ -45,3 +45,17 @@ public sealed class AuditLog
 {
     public long Id { get; set; } public Guid? UserId { get; set; } public string Action { get; set; } = string.Empty; public string EntityName { get; set; } = string.Empty; public Guid? EntityId { get; set; } public string? Details { get; set; } public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
+public sealed class DraftBill
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public Guid? CustomerId { get; set; }
+    public string CustomerName { get; set; } = string.Empty;
+    public string CustomerPhone { get; set; } = string.Empty;
+    public string CustomerType { get; set; } = "NORMAL";
+    public string PayloadJson { get; set; } = "{}";
+    public string SavedBy { get; set; } = string.Empty;
+    public decimal TotalAmount { get; set; }
+    public decimal TotalWeightKg { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
