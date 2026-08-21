@@ -1,6 +1,18 @@
 import { AuditLog, AuditCategory, AuditSeverity, UserProfile } from '../types';
 import { generateId } from './utils';
 
+function getAuthToken(): string | null {
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      const value = sessionStorage.getItem(key);
+      if (value && value.startsWith('eyJ')) return value;
+    }
+  } catch {
+    // Authentication storage may be unavailable outside the browser.
+  }
+  return null;
+}
+
 export function createAuditEntry(
   category: AuditCategory,
   severity: AuditSeverity,
@@ -12,7 +24,7 @@ export function createAuditEntry(
   previousValue?: string,
   newValue?: string
 ): AuditLog {
-  return {
+  const entry: AuditLog = {
     id: generateId('audit'),
     timestamp: new Date().toISOString(),
     category,
@@ -25,6 +37,43 @@ export function createAuditEntry(
     details,
     previousValue,
     newValue,
-    ipAddress: '192.168.1.104'
+    ipAddress: undefined
   };
+
+  void persistAuditEntry(entry);
+  return entry;
+}
+
+async function persistAuditEntry(entry: AuditLog): Promise<void> {
+  try {
+    const token = getAuthToken();
+    if (!token) return;
+
+    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5080').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/api/audit-logs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        category: entry.category,
+        severity: entry.severity,
+        action: entry.action,
+        details: entry.details,
+        performedBy: entry.performedBy,
+        performedByRole: entry.performedByRole,
+        targetName: entry.targetName,
+        targetId: entry.targetId,
+        previousValue: entry.previousValue,
+        newValue: entry.newValue,
+        ipAddress: entry.ipAddress,
+        timestamp: entry.timestamp
+      })
+    });
+
+    if (!response.ok) console.error(`Audit log API HTTP ${response.status}`);
+  } catch (error) {
+    console.error('Audit log persistence failed:', error);
+  }
 }
