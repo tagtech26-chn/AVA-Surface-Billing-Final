@@ -41,20 +41,32 @@ public sealed class BillingMasterSeedService(BillingDbContext db)
             new AppUser { CompanyId = company.Id, UserName = "billing", DisplayName = "Billing User", Role = "BILLING_USER", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "branchmanager", DisplayName = "Branch Manager", Role = "BRANCH_MANAGER", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "accounts", DisplayName = "Accounts", Role = "ACCOUNTS", IsActive = true },
-            // Friendly login alias for the Accounts/payment-confirmation user.
             new AppUser { CompanyId = company.Id, UserName = "accountant", DisplayName = "Accounts", Role = "ACCOUNTS", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "warehouse", DisplayName = "Warehouse", Role = "WAREHOUSE", IsActive = true },
             new AppUser { CompanyId = company.Id, UserName = "admin", DisplayName = "Administrator", Role = "ADMIN", IsActive = true }
         };
 
-        foreach (var user in workflowUsers)
+        foreach (var seedUser in workflowUsers)
         {
-            var exists = await db.AppUsers.AnyAsync(
-                x => x.UserName == user.UserName,
-                cancellationToken);
+            var existingUser = await db.AppUsers
+                .FirstOrDefaultAsync(x => x.UserName == seedUser.UserName, cancellationToken);
 
-            if (!exists)
-                db.AppUsers.Add(user);
+            if (existingUser is null)
+            {
+                db.AppUsers.Add(seedUser);
+                continue;
+            }
+
+            // Existing local users were historically allowed to retain stale/incorrect roles.
+            // Always reconcile the known built-in workflow accounts to their canonical roles.
+            if (!string.Equals(existingUser.Role, seedUser.Role, StringComparison.OrdinalIgnoreCase))
+                existingUser.Role = seedUser.Role;
+
+            if (existingUser.CompanyId is null)
+                existingUser.CompanyId = company.Id;
+
+            if (string.IsNullOrWhiteSpace(existingUser.DisplayName))
+                existingUser.DisplayName = seedUser.DisplayName;
         }
 
         var validFrom = DateTime.Today;
