@@ -35,16 +35,6 @@ export default function App() {
   const [printingInvoice, setPrintingInvoice] = useState<Invoice | null>(null);
   const activeUser = users.find((u) => u.id === activeUserId) || users[0];
 
-  useEffect(() => { Storage.saveProducts(products); }, [products]);
-  useEffect(() => { Storage.saveCustomers(customers); }, [customers]);
-  useEffect(() => { Storage.savePromos(promos); }, [promos]);
-  useEffect(() => { Storage.saveInvoices(invoices); }, [invoices]);
-  useEffect(() => { Storage.saveExpenses(expenses); }, [expenses]);
-  useEffect(() => { Storage.saveUsers(users); }, [users]);
-  useEffect(() => { Storage.saveActiveUserId(activeUserId); }, [activeUserId]);
-  useEffect(() => { Storage.saveStoreDetails(storeDetails); }, [storeDetails]);
-  useEffect(() => { Storage.saveStockLogs(stockLogs); }, [stockLogs]);
-
   useEffect(() => {
     let cancelled = false;
     void loadAuditLogs().then((rows) => {
@@ -150,7 +140,7 @@ export default function App() {
   const handleProcessRefund = (invoiceId: string, restockItems: boolean) => { const targetInv = invoices.find((i) => i.id === invoiceId); logAudit('INVOICE', 'HIGH', 'Invoice Refund Processed', `Processed cancellation & refund for invoice ${targetInv?.invoiceNumber || invoiceId}. Stock auto-restocked: ${restockItems ? 'YES' : 'NO'}.`, targetInv?.invoiceNumber || invoiceId, invoiceId, `Status: ${targetInv?.status || 'PAID'}`, 'Status: REFUNDED'); setInvoices((prev) => prev.map((inv) => { if (inv.id !== invoiceId) return inv; if (restockItems) setProducts((prodList) => prodList.map((prod) => { const item = inv.items.find((ci) => ci.product.id === prod.id); return item ? { ...prod, stock: prod.stock + item.quantity } : prod; })); return { ...inv, status: 'REFUNDED' }; })); };
   const handleAddExpense = (expense: Expense) => setExpenses((prev) => [expense, ...prev]);
   const handleCreateUser = (newUser: Omit<UserProfile, 'id'>) => { const created: UserProfile = { ...newUser, id: `u-${Date.now()}` }; setUsers((prev) => [...prev, created]); logAudit('USER', 'CRITICAL', 'Staff Account & Role Created', `Created staff account for ${created.name} (${created.email}) assigned to role ${created.role}.`, created.name, created.id, 'Unassigned', `Role: ${created.role}`); };
-  const handleResetSeedData = () => { if (window.confirm('Reset all store data back to initial demo seeds?')) { Storage.resetToDefaultSeed(); window.location.reload(); } };
+  const handleResetSeedData = () => { window.alert('Demo seed reset is disabled. Business data is managed exclusively by SQL Server.'); };
   const lowStockProducts = useMemo(() => products.filter((p) => p.stock <= p.reorderLevel), [products]);
   const lowStockCount = lowStockProducts.length;
   const activePromoCount = promos.filter((p) => p.isActive).length;
