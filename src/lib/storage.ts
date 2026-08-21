@@ -1,255 +1,99 @@
 import {
-  Product,
-  Customer,
-  PromoRule,
-  Invoice,
-  Expense,
-  UserProfile,
-  BusinessStoreDetails,
-  StockAdjustment,
-  DraftBill,
-  AuditLog,
-  ManagerDiscountApproval
+  Product, Customer, PromoRule, Invoice, Expense, UserProfile, BusinessStoreDetails,
+  StockAdjustment, DraftBill, AuditLog, ManagerDiscountApproval
 } from '../types';
 import {
-  INITIAL_PRODUCTS,
-  INITIAL_CUSTOMERS,
-  INITIAL_PROMOS,
-  INITIAL_INVOICES,
-  INITIAL_EXPENSES,
-  INITIAL_USERS,
-  INITIAL_STORE_DETAILS,
-  INITIAL_AUDIT_LOGS
+  INITIAL_PROMOS, INITIAL_EXPENSES, INITIAL_USERS, INITIAL_STORE_DETAILS, INITIAL_AUDIT_LOGS
 } from '../data/seedData';
 
-const KEYS = {
-  PRODUCTS: 'bizflow_products_v1',
-  CUSTOMERS: 'bizflow_customers_v1',
-  PROMOS: 'bizflow_promos_v1',
-  INVOICES: 'bizflow_invoices_v1',
-  EXPENSES: 'bizflow_expenses_v1',
-  USERS: 'bizflow_users_v1',
-  ACTIVE_USER_ID: 'bizflow_active_user_id_v1',
-  STORE_DETAILS: 'bizflow_store_details_v1',
-  STOCK_LOGS: 'bizflow_stock_logs_v1',
-  DRAFTS: 'bizflow_drafts_v1',
-  AUDIT_LOGS: 'bizflow_audit_logs_v1',
-  MANAGER_DISCOUNT_APPROVALS: 'bizflow_manager_discount_approvals_v1'
-};
+// Business data is intentionally kept in React/module memory only.
+// SQL Server/API is the authoritative source. sessionStorage is reserved for auth.
+let products: Product[] = [];
+let customers: Customer[] = [];
+let invoices: Invoice[] = [];
+let promos: PromoRule[] = [...INITIAL_PROMOS];
+let expenses: Expense[] = [...INITIAL_EXPENSES];
+let users: UserProfile[] = [...INITIAL_USERS];
+let activeUserId = INITIAL_USERS[0]?.id || '';
+let storeDetails: BusinessStoreDetails = { ...INITIAL_STORE_DETAILS };
+let stockLogs: StockAdjustment[] = [];
+let drafts: DraftBill[] = [];
+let auditLogs: AuditLog[] = [...INITIAL_AUDIT_LOGS];
+let managerDiscountApprovals: ManagerDiscountApproval[] = [];
+let productServerAvailable = false;
 
-function getStorageItem<T>(key: string, defaultValue: T): T {
-  try {
-    const item = localStorage.getItem(key);
-    return item ? JSON.parse(item) : defaultValue;
-  } catch (err) {
-    console.error(`Error reading ${key} from storage:`, err);
-    return defaultValue;
-  }
+export function setProductsFromServer(value: Product[]): void { products = [...value]; productServerAvailable = true; }
+export function setCustomersFromServer(value: Customer[]): void { customers = [...value]; }
+export function setInvoicesFromServer(value: Invoice[]): void { invoices = [...value]; }
+
+function mapServerProduct(p: any): Product {
+  return {
+    id: p.id, sku: p.sku, barcode: p.sku, name: p.name, category: 'General',
+    costPrice: Number(p.costPrice || 0), sellingPrice: Number(p.sellingPrice || 0), stock: Number(p.stock || 0),
+    reorderLevel: Number(p.reorderLevel || 0), taxRate: Number(p.taxRate ?? p.gstRate ?? 0), unit: p.unit || 'PCS',
+    hsnCode: p.hsnCode, updatedAt: new Date().toISOString(), isActive: p.isActive !== false
+  } as Product;
 }
 
-function setStorageItem<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (err) {
-    console.error(`Error writing ${key} to storage:`, err);
-  }
-}
-
-type ServerProduct = {
-  id: string;
-  sku: string;
-  name: string;
-  hsnCode?: string;
-  unit: string;
-  costPrice: number;
-  sellingPrice: number;
-  stock: number;
-  reorderLevel: number;
-  taxRate: number;
-  isActive: boolean;
-};
-
-type ProductApiResponse = ServerProduct[] | {
-  value?: ServerProduct[];
-  items?: ServerProduct[];
-  count?: number;
-  totalCount?: number;
-  Count?: number;
-};
-
-function normalizeProductResponse(payload: ProductApiResponse): ServerProduct[] {
+function normalizeProductResponse(payload: any): any[] {
   if (Array.isArray(payload)) return payload;
-  if (payload && Array.isArray(payload.items)) return payload.items;
-  if (payload && Array.isArray(payload.value)) return payload.value;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.value)) return payload.value;
   return [];
 }
 
-function productPayload(products: Product[]) {
-  return products.map((p) => ({
-    id: p.id,
-    sku: p.sku,
-    name: p.name,
-    hsnCode: p.hsnCode,
-    unit: p.unit,
-    costPrice: p.costPrice,
-    sellingPrice: p.sellingPrice,
-    stock: p.stock,
-    reorderLevel: p.reorderLevel,
-    taxRate: p.taxRate
-  }));
-}
-
-function mergeServerProducts(serverProducts: ServerProduct[]): Product[] {
-  const existingById = new Map(INITIAL_PRODUCTS.map((p) => [p.id, p]));
-  const existingBySku = new Map(INITIAL_PRODUCTS.map((p) => [p.sku, p]));
-
-  return serverProducts.map((p) => {
-    const existing = existingById.get(p.id) || existingBySku.get(p.sku);
-    return {
-      ...(existing || {} as Product),
-      id: p.id,
-      sku: p.sku,
-      name: p.name,
-      barcode: existing?.barcode || p.sku,
-      category: existing?.category || 'General',
-      costPrice: Number(p.costPrice),
-      sellingPrice: Number(p.sellingPrice),
-      stock: Number(p.stock),
-      reorderLevel: Number(p.reorderLevel),
-      taxRate: Number(p.taxRate),
-      unit: p.unit,
-      hsnCode: p.hsnCode,
-      updatedAt: new Date().toISOString(),
-      isActive: p.isActive
-    } as Product;
-  });
-}
-
-async function createMissingSeedProducts(serverProducts: ServerProduct[]): Promise<ServerProduct[]> {
-  const existingSkus = new Set(serverProducts.map((p) => p.sku.trim().toUpperCase()));
-  const missing = INITIAL_PRODUCTS.filter((p) => !existingSkus.has(p.sku.trim().toUpperCase()));
-  if (missing.length === 0) return serverProducts;
-
-  const response = await fetch('/api/products/sync', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(productPayload(missing))
-  });
-
-  if (!response.ok) {
-    const details = await response.text().catch(() => '');
-    throw new Error(`Product seed reconciliation HTTP ${response.status}${details ? `: ${details}` : ''}`);
-  }
-
-  return normalizeProductResponse(await response.json() as ProductApiResponse);
-}
-
-let productServerAvailable = false;
-
 export async function hydrateProductsFromServer(): Promise<void> {
-  if (typeof window === 'undefined') return;
-
-  const token = localStorage.getItem('avasurface_auth_token');
-  if (!token) return;
-
-  try {
-    const response = await fetch('/api/products?page=1&pageSize=100');
-    if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
-
-    const payload = await response.json() as ProductApiResponse;
-    let serverProducts = normalizeProductResponse(payload);
-
-    if (serverProducts.length === 0) {
-      const syncResponse = await fetch('/api/products/sync', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(productPayload(INITIAL_PRODUCTS))
-      });
-      if (!syncResponse.ok) {
-        const details = await syncResponse.text().catch(() => '');
-        throw new Error(`Product migration HTTP ${syncResponse.status}${details ? `: ${details}` : ''}`);
-      }
-
-      const pageResponse = await fetch('/api/products?page=1&pageSize=100');
-      if (!pageResponse.ok) throw new Error(`Product catalogue HTTP ${pageResponse.status}`);
-      serverProducts = normalizeProductResponse(await pageResponse.json() as ProductApiResponse);
-    } else {
-      serverProducts = await createMissingSeedProducts(serverProducts);
-    }
-
-    if (serverProducts.length === 0) throw new Error('Product migration returned an empty catalog.');
-
-    setStorageItem(KEYS.PRODUCTS, mergeServerProducts(serverProducts));
-    productServerAvailable = true;
-    console.info(`SQL Server product working set ready: ${serverProducts.length} products.`);
-  } catch (error) {
-    productServerAvailable = false;
-    console.warn('Product API unavailable; retaining existing local product cache.', error);
-  }
-}
-
-function syncProducts(products: Product[]): void {
-  if (!productServerAvailable) return;
-  void fetch('/api/products/sync', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(productPayload(products))
-  }).catch((error) => {
-    productServerAvailable = false;
-    console.error('Product server sync failed:', error);
-  });
+  const response = await fetch('/api/products?page=1&pageSize=100');
+  if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
+  const rows = normalizeProductResponse(await response.json());
+  if (!rows.length) { setProductsFromServer([]); return; }
+  setProductsFromServer(rows.map(mapServerProduct));
+  console.info(`SQL Server product working set ready: ${products.length} products.`);
 }
 
 export const Storage = {
-  getProducts(): Product[] { return getStorageItem<Product[]>(KEYS.PRODUCTS, INITIAL_PRODUCTS); },
-  saveProducts(products: Product[]): void { setStorageItem(KEYS.PRODUCTS, products); syncProducts(products); },
-  getCustomers(): Customer[] { return getStorageItem<Customer[]>(KEYS.CUSTOMERS, INITIAL_CUSTOMERS); },
-  saveCustomers(customers: Customer[]): void { setStorageItem(KEYS.CUSTOMERS, customers); },
-  getPromos(): PromoRule[] { return getStorageItem<PromoRule[]>(KEYS.PROMOS, INITIAL_PROMOS); },
-  savePromos(promos: PromoRule[]): void { setStorageItem(KEYS.PROMOS, promos); },
-  getInvoices(): Invoice[] { return getStorageItem<Invoice[]>(KEYS.INVOICES, INITIAL_INVOICES); },
-  saveInvoices(invoices: Invoice[]): void { setStorageItem(KEYS.INVOICES, invoices); },
-  getExpenses(): Expense[] { return getStorageItem<Expense[]>(KEYS.EXPENSES, INITIAL_EXPENSES); },
-  saveExpenses(expenses: Expense[]): void { setStorageItem(KEYS.EXPENSES, expenses); },
-  getUsers(): UserProfile[] { return getStorageItem<UserProfile[]>(KEYS.USERS, INITIAL_USERS); },
-  saveUsers(users: UserProfile[]): void { setStorageItem(KEYS.USERS, users); },
-  getActiveUserId(): string {
-    try {
-      const authenticated = localStorage.getItem('avasurface_auth_user');
-      if (authenticated) {
-        const user = JSON.parse(authenticated) as Partial<UserProfile>;
-        if (user.id) return user.id;
-      }
-    } catch {
-      // Fall back to the persisted UI session below.
-    }
-    return getStorageItem<string>(KEYS.ACTIVE_USER_ID, INITIAL_USERS[0].id);
-  },
-  saveActiveUserId(id: string): void { setStorageItem(KEYS.ACTIVE_USER_ID, id); },
-  getStoreDetails(): BusinessStoreDetails { return getStorageItem<BusinessStoreDetails>(KEYS.STORE_DETAILS, INITIAL_STORE_DETAILS); },
-  saveStoreDetails(details: BusinessStoreDetails): void { setStorageItem(KEYS.STORE_DETAILS, details); },
-  getStockLogs(): StockAdjustment[] { return getStorageItem<StockAdjustment[]>(KEYS.STOCK_LOGS, []); },
-  saveStockLogs(logs: StockAdjustment[]): void { setStorageItem(KEYS.STOCK_LOGS, logs); },
-  getDrafts(): DraftBill[] { return getStorageItem<DraftBill[]>(KEYS.DRAFTS, []); },
-  saveDrafts(drafts: DraftBill[]): void { setStorageItem(KEYS.DRAFTS, drafts); },
-  getManagerDiscountApprovals(): ManagerDiscountApproval[] {
-    return getStorageItem<ManagerDiscountApproval[]>(KEYS.MANAGER_DISCOUNT_APPROVALS, []);
-  },
-  saveManagerDiscountApprovals(requests: ManagerDiscountApproval[]): void {
-    setStorageItem(KEYS.MANAGER_DISCOUNT_APPROVALS, requests);
-  },
-  getPendingManagerDiscountApprovals(): ManagerDiscountApproval[] {
-    return getStorageItem<ManagerDiscountApproval[]>(KEYS.MANAGER_DISCOUNT_APPROVALS, [])
-      .filter((request) => request.status === 'PENDING');
-  },
-  getAuditLogs(): AuditLog[] {
-    return getStorageItem<AuditLog[]>(KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS);
-  },
-  saveAuditLogs(logs: AuditLog[]): void {
-    setStorageItem(KEYS.AUDIT_LOGS, logs);
-  },
+  getProducts(): Product[] { return [...products]; },
+  saveProducts(value: Product[]): void { products = [...value]; if (productServerAvailable) void syncProducts(value); },
+  getCustomers(): Customer[] { return [...customers]; },
+  saveCustomers(value: Customer[]): void { customers = [...value]; },
+  getPromos(): PromoRule[] { return [...promos]; },
+  savePromos(value: PromoRule[]): void { promos = [...value]; },
+  getInvoices(): Invoice[] { return [...invoices]; },
+  saveInvoices(value: Invoice[]): void { invoices = [...value]; },
+  getExpenses(): Expense[] { return [...expenses]; },
+  saveExpenses(value: Expense[]): void { expenses = [...value]; },
+  getUsers(): UserProfile[] { return [...users]; },
+  saveUsers(value: UserProfile[]): void { users = [...value]; },
+  getActiveUserId(): string { return activeUserId; },
+  saveActiveUserId(id: string): void { activeUserId = id; },
+  getStoreDetails(): BusinessStoreDetails { return { ...storeDetails }; },
+  saveStoreDetails(value: BusinessStoreDetails): void { storeDetails = { ...value }; },
+  getStockLogs(): StockAdjustment[] { return [...stockLogs]; },
+  saveStockLogs(value: StockAdjustment[]): void { stockLogs = [...value]; },
+  getDrafts(): DraftBill[] { return [...drafts]; },
+  saveDrafts(value: DraftBill[]): void { drafts = [...value]; },
+  getManagerDiscountApprovals(): ManagerDiscountApproval[] { return [...managerDiscountApprovals]; },
+  saveManagerDiscountApprovals(value: ManagerDiscountApproval[]): void { managerDiscountApprovals = [...value]; },
+  getPendingManagerDiscountApprovals(): ManagerDiscountApproval[] { return managerDiscountApprovals.filter(x => x.status === 'PENDING'); },
+  getAuditLogs(): AuditLog[] { return [...auditLogs]; },
+  saveAuditLogs(value: AuditLog[]): void { auditLogs = [...value]; },
   resetToDefaultSeed(): void {
-    Object.values(KEYS).forEach((key) => localStorage.removeItem(key));
-    void hydrateProductsFromServer();
+    products = []; customers = []; invoices = [];
+    promos = [...INITIAL_PROMOS]; expenses = [...INITIAL_EXPENSES]; users = [...INITIAL_USERS];
+    activeUserId = INITIAL_USERS[0]?.id || ''; storeDetails = { ...INITIAL_STORE_DETAILS };
+    stockLogs = []; drafts = []; auditLogs = [...INITIAL_AUDIT_LOGS]; managerDiscountApprovals = [];
+    productServerAvailable = false;
   }
 };
+
+async function syncProducts(value: Product[]): Promise<void> {
+  try {
+    const response = await fetch('/api/products/sync', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(value.map(p => ({ id: p.id, sku: p.sku, name: p.name, hsnCode: p.hsnCode,
+        unit: p.unit, costPrice: p.costPrice, sellingPrice: p.sellingPrice, stock: p.stock,
+        reorderLevel: p.reorderLevel, taxRate: p.taxRate })))
+    });
+    if (!response.ok) console.error(`Product sync HTTP ${response.status}`);
+  } catch (error) { console.error('Product server sync failed.', error); }
+}
