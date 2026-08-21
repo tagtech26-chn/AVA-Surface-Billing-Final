@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { LoginView } from './components/LoginView';
-import { Storage, hydrateProductsFromServer, setCustomersFromServer, setPromosFromServer } from './lib/storage';
+import { Storage, hydrateProductsFromServer, hydrateDraftsFromServer, setCustomersFromServer, setPromosFromServer } from './lib/storage';
 import { hydrateInvoicesFromServer } from './lib/invoiceHydration';
 import { UserProfile, Customer, PromoRule } from './types';
 import './index.css';
@@ -74,7 +74,13 @@ function AuthenticatedApp() {
     (async()=>{
       try {
         setStartupError('');
-        await Promise.all([hydrateProductsFromServer(), hydrateInvoicesFromServer(), hydrateCustomersFromServer(), hydratePromosFromServer()]);
+        await Promise.all([
+          hydrateProductsFromServer(),
+          hydrateInvoicesFromServer(),
+          hydrateCustomersFromServer(),
+          hydratePromosFromServer(),
+          hydrateDraftsFromServer()
+        ]);
       }
       catch(error) { console.error('Authoritative DB hydration failed:', error); if(active) setStartupError(error instanceof Error ? error.message : 'Unable to load business data from the database.'); }
       finally { if(active) setHydrating(false); }
