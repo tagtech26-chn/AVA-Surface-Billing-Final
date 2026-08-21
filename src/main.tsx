@@ -88,8 +88,14 @@ function AuthenticatedApp() {
 
   if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading BizFlow...</div>;
   if (!user) return <LoginView onLogin={(profile) => {
-    // LoginView has just received a fresh server-issued identity. Persist it only
-    // in the current browser session; never revive a previous local seeded user.
+    // Keep the server-issued identity as the active application user. App.tsx
+    // still uses the legacy Storage user list for several legacy screens, so
+    // ensure the authenticated DB user is present there and selected by ID.
+    const existingUsers = Storage.getUsers();
+    const mergedUsers = existingUsers.some((candidate) => candidate.id === profile.id)
+      ? existingUsers.map((candidate) => candidate.id === profile.id ? profile : candidate)
+      : [profile, ...existingUsers];
+    Storage.saveUsers(mergedUsers);
     Storage.saveActiveUserId(profile.id);
     setUser(profile);
   }} />;
