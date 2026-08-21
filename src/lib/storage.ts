@@ -2,36 +2,37 @@ import {
   Product, Customer, PromoRule, Invoice, Expense, UserProfile, BusinessStoreDetails,
   StockAdjustment, DraftBill, AuditLog, ManagerDiscountApproval
 } from '../types';
-import {
-  INITIAL_PROMOS, INITIAL_EXPENSES, INITIAL_USERS, INITIAL_STORE_DETAILS, INITIAL_AUDIT_LOGS
-} from '../data/seedData';
+import { INITIAL_STORE_DETAILS } from '../data/seedData';
 
 // Business data is intentionally kept in React/module memory only.
 // SQL Server/API is the authoritative source. sessionStorage is reserved for auth.
 let products: Product[] = [];
 let customers: Customer[] = [];
 let invoices: Invoice[] = [];
-let promos: PromoRule[] = [...INITIAL_PROMOS];
-let expenses: Expense[] = [...INITIAL_EXPENSES];
-let users: UserProfile[] = [...INITIAL_USERS];
-let activeUserId = INITIAL_USERS[0]?.id || '';
+let promos: PromoRule[] = [];
+let expenses: Expense[] = [];
+let users: UserProfile[] = [];
+let activeUserId = '';
 let storeDetails: BusinessStoreDetails = { ...INITIAL_STORE_DETAILS };
 let stockLogs: StockAdjustment[] = [];
 let drafts: DraftBill[] = [];
-let auditLogs: AuditLog[] = [...INITIAL_AUDIT_LOGS];
+let auditLogs: AuditLog[] = [];
 let managerDiscountApprovals: ManagerDiscountApproval[] = [];
 let productServerAvailable = false;
 
 export function setProductsFromServer(value: Product[]): void { products = [...value]; productServerAvailable = true; }
 export function setCustomersFromServer(value: Customer[]): void { customers = [...value]; }
 export function setInvoicesFromServer(value: Invoice[]): void { invoices = [...value]; }
+export function setPromosFromServer(value: PromoRule[]): void { promos = [...value]; }
 
 function mapServerProduct(p: any): Product {
   return {
-    id: p.id, sku: p.sku, barcode: p.sku, name: p.name, category: 'General',
+    id: p.id, sku: p.sku, barcode: p.barcode || p.sku, name: p.name, category: p.category || 'General',
     costPrice: Number(p.costPrice || 0), sellingPrice: Number(p.sellingPrice || 0), stock: Number(p.stock || 0),
     reorderLevel: Number(p.reorderLevel || 0), taxRate: Number(p.taxRate ?? p.gstRate ?? 0), unit: p.unit || 'PCS',
-    hsnCode: p.hsnCode, updatedAt: new Date().toISOString(), isActive: p.isActive !== false
+    hsnCode: p.hsnCode, description: p.description, imageUrl: p.imageUrl, updatedAt: p.updatedAtUtc || new Date().toISOString(), isActive: p.isActive !== false,
+    tileDimensions: p.tileDimensions, pcsPerBox: p.pcsPerBox, sqftPerBox: p.sqftPerBox, tileFinish: p.tileFinish, tileType: p.tileType,
+    batchNo: p.batchNo, pricePerSqFt: p.pricePerSqFt, weightPerBoxKg: p.weightPerBoxKg
   } as Product;
 }
 
@@ -46,7 +47,6 @@ export async function hydrateProductsFromServer(): Promise<void> {
   const response = await fetch('/api/products?page=1&pageSize=100');
   if (!response.ok) throw new Error(`Product API HTTP ${response.status}`);
   const rows = normalizeProductResponse(await response.json());
-  if (!rows.length) { setProductsFromServer([]); return; }
   setProductsFromServer(rows.map(mapServerProduct));
   console.info(`SQL Server product working set ready: ${products.length} products.`);
 }
@@ -78,10 +78,9 @@ export const Storage = {
   getAuditLogs(): AuditLog[] { return [...auditLogs]; },
   saveAuditLogs(value: AuditLog[]): void { auditLogs = [...value]; },
   resetToDefaultSeed(): void {
-    products = []; customers = []; invoices = [];
-    promos = [...INITIAL_PROMOS]; expenses = [...INITIAL_EXPENSES]; users = [...INITIAL_USERS];
-    activeUserId = INITIAL_USERS[0]?.id || ''; storeDetails = { ...INITIAL_STORE_DETAILS };
-    stockLogs = []; drafts = []; auditLogs = [...INITIAL_AUDIT_LOGS]; managerDiscountApprovals = [];
+    products = []; customers = []; invoices = []; promos = []; expenses = []; users = [];
+    activeUserId = ''; storeDetails = { ...INITIAL_STORE_DETAILS };
+    stockLogs = []; drafts = []; auditLogs = []; managerDiscountApprovals = [];
     productServerAvailable = false;
   }
 };
