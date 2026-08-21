@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AVASurface.Server.Infrastructure;
 public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options):DbContext(options)
 {
- public DbSet<Company> Companies=>Set<Company>(); public DbSet<Customer> Customers=>Set<Customer>(); public DbSet<Salesperson> Salespersons=>Set<Salesperson>(); public DbSet<Product> Products=>Set<Product>(); public DbSet<Promotion> Promotions=>Set<Promotion>(); public DbSet<AppUser> AppUsers=>Set<AppUser>(); public DbSet<Invoice> Invoices=>Set<Invoice>(); public DbSet<InvoiceLine> InvoiceLines=>Set<InvoiceLine>(); public DbSet<Payment> Payments=>Set<Payment>(); public DbSet<StockTransaction> StockTransactions=>Set<StockTransaction>(); public DbSet<AuditLog> AuditLogs=>Set<AuditLog>();
+ public DbSet<Company> Companies=>Set<Company>(); public DbSet<Customer> Customers=>Set<Customer>(); public DbSet<Salesperson> Salespersons=>Set<Salesperson>(); public DbSet<Product> Products=>Set<Product>(); public DbSet<Promotion> Promotions=>Set<Promotion>(); public DbSet<AppUser> AppUsers=>Set<AppUser>(); public DbSet<Invoice> Invoices=>Set<Invoice>(); public DbSet<InvoiceLine> InvoiceLines=>Set<InvoiceLine>(); public DbSet<Payment> Payments=>Set<Payment>(); public DbSet<StockTransaction> StockTransactions=>Set<StockTransaction>(); public DbSet<AuditLog> AuditLogs=>Set<AuditLog>(); public DbSet<DraftBill> DraftBills=>Set<DraftBill>();
  protected override void OnModelCreating(ModelBuilder modelBuilder)
  {
   modelBuilder.Entity<Company>(e=>{e.HasKey(x=>x.Id);e.Property(x=>x.Code).HasMaxLength(30).IsRequired();e.Property(x=>x.LegalName).HasMaxLength(200).IsRequired();e.Property(x=>x.Gstin).HasMaxLength(15);e.HasIndex(x=>x.Code).IsUnique();});
@@ -17,5 +17,6 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
   modelBuilder.Entity<Payment>(e=>{e.HasKey(x=>x.Id);e.Property(x=>x.Amount).HasPrecision(18,2);e.Property(x=>x.Method).HasMaxLength(30).IsRequired();e.HasOne(x=>x.Invoice).WithMany(x=>x.Payments).HasForeignKey(x=>x.InvoiceId).OnDelete(DeleteBehavior.Cascade);});
   modelBuilder.Entity<StockTransaction>(e=>{e.HasKey(x=>x.Id);e.Property(x=>x.QuantityChange).HasPrecision(18,3);e.Property(x=>x.TransactionType).HasMaxLength(40).IsRequired();e.HasOne(x=>x.Product).WithMany().HasForeignKey(x=>x.ProductId).OnDelete(DeleteBehavior.Restrict);});
   modelBuilder.Entity<AuditLog>(e=>{e.HasKey(x=>x.Id);e.Property(x=>x.Action).HasMaxLength(100).IsRequired();e.Property(x=>x.EntityName).HasMaxLength(100).IsRequired();});
+  modelBuilder.Entity<DraftBill>(e=>{e.HasKey(x=>x.Id);e.Property(x=>x.CustomerName).HasMaxLength(200);e.Property(x=>x.CustomerPhone).HasMaxLength(30);e.Property(x=>x.CustomerType).HasMaxLength(20).IsRequired();e.Property(x=>x.SavedBy).HasMaxLength(150).IsRequired();e.Property(x=>x.PayloadJson).IsRequired();e.Property(x=>x.TotalAmount).HasPrecision(18,2);e.Property(x=>x.TotalWeightKg).HasPrecision(18,3);e.HasIndex(x=>new{x.UserId,x.CreatedAtUtc});});
  }
 }
