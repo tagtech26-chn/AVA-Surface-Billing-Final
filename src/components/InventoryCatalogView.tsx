@@ -32,6 +32,8 @@ type ProductPage = {
   totalPages: number;
 };
 
+type StatusFilter = 'ALL' | 'ACTIVE' | 'INACTIVE';
+
 const emptyProduct = (): Product => ({
   id: crypto.randomUUID(),
   sku: '',
@@ -45,7 +47,8 @@ const emptyProduct = (): Product => ({
   taxRate: 18,
   unit: 'box',
   description: '',
-  updatedAt: new Date().toISOString()
+  updatedAt: new Date().toISOString(),
+  isActive: true
 });
 
 const toProduct = (p: ApiProduct): Product => ({
@@ -61,6 +64,7 @@ const toProduct = (p: ApiProduct): Product => ({
   taxRate: Number(p.taxRate),
   unit: p.unit,
   hsnCode: p.hsnCode || undefined,
+  isActive: p.isActive !== false,
   updatedAt: new Date().toISOString()
 });
 
@@ -71,6 +75,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<'ALL' | 'LOW_STOCK' | 'OUT_OF_STOCK'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<ProductPage>({ items: [], page: 1, pageSize: 50, totalCount: 0, totalPages: 0 });
@@ -86,7 +91,12 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        includeInactive: 'true',
+        activeFilter: statusFilter
+      });
       if (search.trim()) params.set('search', search.trim());
       if (stockFilter !== 'ALL') params.set('stockFilter', stockFilter);
       const response = await fetch(`/api/products?${params.toString()}`);
@@ -98,7 +108,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, search, stockFilter]);
+  }, [page, pageSize, search, stockFilter, statusFilter]);
 
   useEffect(() => {
     const timer = window.setTimeout(load, search.trim() ? 250 : 0);
@@ -107,10 +117,10 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
 
   useEffect(() => {
     setPage(1);
-  }, [search, stockFilter, pageSize]);
+  }, [search, stockFilter, statusFilter, pageSize]);
 
-  const visibleRows = useMemo(() => result.items.map(toProduct), [result.items]);
   const lowStockOnPage = result.items.filter((p) => p.stock <= p.reorderLevel).length;
+  const inactiveCountOnPage = result.items.filter((p) => !p.isActive).length;
 
   const saveSingle = async () => {
     if (!editing || !editing.name.trim() || !editing.sku.trim()) return;
@@ -128,7 +138,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         stock: Number(editing.stock) || 0,
         reorderLevel: Number(editing.reorderLevel) || 0,
         gstRate: Number(editing.taxRate) || 0,
-        isActive: true
+        isActive: editing.isActive !== false
       };
       const response = await fetch(isNew ? '/api/products' : `/api/products/${editing.id}`, {
         method: isNew ? 'POST' : 'PUT',
@@ -136,11 +146,41 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         body: JSON.stringify(body)
       });
       if (!response.ok) throw new Error(await response.text() || `Save failed (${response.status})`);
-      onSaveProduct(editing);
+      onSaveProduct({ ...editing, isActive: body.isActive });
       setEditing(null);
       await load();
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Unable to save product.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (product: ApiProduct) => {
+    if (!canEdit) return;
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/products/${product.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId: null,
+          sku: product.sku,
+          name: product.name,
+          hsnCode: product.hsnCode || null,
+          unit: product.unit || 'PCS',
+          costPrice: Number(product.costPrice) || 0,
+          sellingPrice: Number(product.sellingPrice) || 0,
+          stock: Number(product.stock) || 0,
+          reorderLevel: Number(product.reorderLevel) || 0,
+          gstRate: Number(product.taxRate) || 0,
+          isActive: !product.isActive
+        })
+      });
+      if (!response.ok) throw new Error(await response.text() || `Unable to change item status (${response.status})`);
+      await load();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Unable to change item status.');
     } finally {
       setSaving(false);
     }
@@ -178,7 +218,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         <div>
           <p className="text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-black">Inventory Master</p>
           <h1 className="text-2xl font-black text-white mt-1">Stock Items &amp; Locations</h1>
-          <p className="text-xs text-slate-400 mt-1">Data-entry first. Search and page through the master instead of loading the entire catalogue.</p>
+          <p className="text-xs text-slate-400 mt-1">All products stay in the master. Deactivated items remain visible here and are blocked only from billing.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={load} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-xs font-bold flex items-center gap-2">
@@ -195,9 +235,10 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Total Inventory Items</p><p className="text-2xl font-black text-white mt-1">{result.totalCount.toLocaleString()}</p><p className="text-[10px] text-slate-500 mt-1">Products in master</p></div>
         <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Items on Current Page</p><p className="text-2xl font-black text-indigo-300 mt-1">{result.items.length}</p></div>
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Deactivated Shown</p><p className="text-2xl font-black text-rose-400 mt-1">{inactiveCountOnPage}</p></div>
         <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Low Stock Shown</p><p className="text-2xl font-black text-amber-400 mt-1">{lowStockOnPage}</p></div>
         <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Page</p><p className="text-2xl font-black text-white mt-1">{result.page} <span className="text-sm text-slate-500">/ {result.totalPages || 1}</span></p></div>
       </div>
@@ -208,6 +249,9 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Type item name, SKU or HSN..." className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm outline-none focus:border-indigo-500" />
           {search && <button onClick={() => setSearch('')} className="absolute right-3 top-3 text-slate-500"><X className="w-4 h-4" /></button>}
         </div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-bold">
+          <option value="ALL">All items</option><option value="ACTIVE">Active only</option><option value="INACTIVE">Deactivated only</option>
+        </select>
         <select value={stockFilter} onChange={(e) => setStockFilter(e.target.value as typeof stockFilter)} className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-bold">
           <option value="ALL">All stock</option><option value="LOW_STOCK">Low stock</option><option value="OUT_OF_STOCK">Out of stock</option>
         </select>
@@ -222,19 +266,20 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-950 border-b border-slate-800 text-[10px] uppercase tracking-wider text-slate-500 font-black">
-              <tr><th className="p-4">Item</th><th className="p-4">SKU / HSN</th><th className="p-4">Unit</th><th className="p-4 text-right">Cost</th><th className="p-4 text-right">Selling</th><th className="p-4 text-right">Stock</th><th className="p-4 text-right">Action</th></tr>
+              <tr><th className="p-4">Item</th><th className="p-4">SKU / HSN</th><th className="p-4">Status</th><th className="p-4">Unit</th><th className="p-4 text-right">Cost</th><th className="p-4 text-right">Selling</th><th className="p-4 text-right">Qty</th><th className="p-4 text-right">Action</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70">
-              {loading ? <tr><td colSpan={7} className="p-12 text-center text-slate-500 text-sm">Loading inventory...</td></tr> : result.items.length === 0 ? <tr><td colSpan={7} className="p-12 text-center text-slate-500 text-sm">No items found.</td></tr> : result.items.map((p) => {
+              {loading ? <tr><td colSpan={8} className="p-12 text-center text-slate-500 text-sm">Loading inventory...</td></tr> : result.items.length === 0 ? <tr><td colSpan={8} className="p-12 text-center text-slate-500 text-sm">No items found.</td></tr> : result.items.map((p) => {
                 const low = p.stock <= p.reorderLevel;
-                return <tr key={p.id} className="hover:bg-slate-800/40">
+                return <tr key={p.id} className={`hover:bg-slate-800/40 ${p.isActive ? '' : 'opacity-75'}`}>
                   <td className="p-4"><p className="font-bold text-white text-sm">{p.name}</p><p className="text-[10px] text-slate-500 mt-1">MSSQL master record</p></td>
                   <td className="p-4 font-mono text-xs"><p className="text-slate-200">{p.sku}</p><p className="text-slate-500">{p.hsnCode || '—'}</p></td>
+                  <td className="p-4"><span className={`inline-flex px-2 py-1 rounded-lg text-[10px] font-black ${p.isActive ? 'bg-emerald-950 text-emerald-300 border border-emerald-900' : 'bg-rose-950 text-rose-300 border border-rose-900'}`}>{p.isActive ? 'ACTIVE' : 'DEACTIVATED'}</span></td>
                   <td className="p-4 text-xs text-slate-300">{p.unit}</td>
                   <td className="p-4 text-right text-xs text-slate-300">{currencySymbol}{Number(p.costPrice).toFixed(2)}</td>
                   <td className="p-4 text-right text-sm font-black text-white">{currencySymbol}{Number(p.sellingPrice).toFixed(2)}</td>
                   <td className="p-4 text-right"><span className={`font-black ${low ? 'text-amber-400' : 'text-emerald-400'}`}>{Number(p.stock).toLocaleString()} {p.unit}</span>{low && <AlertTriangle className="inline w-3.5 h-3.5 ml-1 text-amber-400" />}</td>
-                  <td className="p-4 text-right">{canEdit && <button onClick={() => setEditing(toProduct(p))} className="p-2 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white"><Edit3 className="w-4 h-4" /></button>}</td>
+                  <td className="p-4 text-right"><div className="flex justify-end gap-2">{canEdit && <button title="Edit" onClick={() => setEditing(toProduct(p))} className="p-2 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white"><Edit3 className="w-4 h-4" /></button>}{canEdit && <button disabled={saving} onClick={() => void toggleActive(p)} className={`px-3 py-2 rounded-lg text-[10px] font-black disabled:opacity-40 ${p.isActive ? 'bg-rose-950 text-rose-300 hover:bg-rose-900' : 'bg-emerald-950 text-emerald-300 hover:bg-emerald-900'}`}>{p.isActive ? 'Deactivate' : 'Reactivate'}</button>}</div></td>
                 </tr>;
               })}
             </tbody>
@@ -253,6 +298,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         <label className="text-slate-400">GST Rate (%)<input type="number" min="0" max="100" step="0.01" value={editing.taxRate} onChange={(e) => setEditing({ ...editing, taxRate: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
         <label className="text-slate-400">Opening / Current Stock<input type="number" value={editing.stock} onChange={(e) => setEditing({ ...editing, stock: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
         <label className="text-slate-400">Reorder Level<input type="number" value={editing.reorderLevel} onChange={(e) => setEditing({ ...editing, reorderLevel: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
+        <label className="col-span-2 flex items-center gap-3 rounded-xl bg-slate-950 border border-slate-700 px-3 py-3 text-slate-300"><input type="checkbox" checked={editing.isActive !== false} onChange={(e) => setEditing({ ...editing, isActive: e.target.checked })} className="h-4 w-4" /><span className="font-bold">Active item — available for billing</span></label>
       </div><div className="flex justify-end gap-2"><button onClick={() => setEditing(null)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">Cancel</button><button disabled={saving || !editing.name.trim() || !editing.sku.trim()} onClick={saveSingle} className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black disabled:opacity-40">{saving ? 'Saving...' : 'Save Item'}</button></div></div></div>}
 
       <TileBatchAddModal isOpen={batchOpen} onClose={() => setBatchOpen(false)} onBatchSaveProducts={saveBatch} currencySymbol={currencySymbol} />
