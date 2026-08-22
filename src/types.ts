@@ -24,7 +24,7 @@ export interface Invoice {
   paymentConfirmedAtUtc?: string;
   paymentMethodConfirmed?: PaymentMethod;
   paymentSpecificReference?: string;
-  notes?: string; deliveryStatus?: DeliveryStatus; dispatchDate?: string; driverName?: string; driverPhone?: string; vehicleNumber?: string; trackingNumber?: string; transporterName?: string; deliveryNotes?: string; ewayBillNo?: string; ewayBillDate?: string; ewayValidUntil?: string; irnNo?: string; ackNo?: string; ackDate?: string; distanceKm?: number;
+  notes?: string; deliveryStatus?: DeliveryStatus; dispatchDate?: string; driverName?: string; driverPhone?: string; vehicleNumber?: string; trackingNumber?: string; transporterName?: string; deliveryNotes?: string; warehouseLoadedBy?: string; warehouseVerifiedBy?: string; warehouseLoadedAtUtc?: string; warehouseRemarks?: string; deliveredAtUtc?: string; deliveredByName?: string; ewayBillNo?: string; ewayBillDate?: string; ewayValidUntil?: string; irnNo?: string; ackNo?: string; ackDate?: string; distanceKm?: number;
 }
 export type ExpenseCategory = 'RENT' | 'UTILITIES' | 'SUPPLIER_PAYMENT' | 'SALARIES' | 'MARKETING' | 'EQUIPMENT' | 'OTHER';
 export interface Expense { id: string; title: string; category: ExpenseCategory; amount: number; date: string; paidTo: string; paymentMethod: PaymentMethod; recordedBy: string; receiptNumber?: string; notes?: string; }
