@@ -18,21 +18,27 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         [FromQuery] string? search = null,
         [FromQuery] string? category = null,
         [FromQuery] string? stockFilter = null,
+        [FromQuery] bool includeInactive = false,
         CancellationToken cancellationToken = default)
     {
         var usesCatalogQuery = Request.Query.ContainsKey("page") || Request.Query.ContainsKey("pageSize") ||
                                !string.IsNullOrWhiteSpace(search) || !string.IsNullOrWhiteSpace(category) ||
-                               !string.IsNullOrWhiteSpace(stockFilter);
+                               !string.IsNullOrWhiteSpace(stockFilter) || Request.Query.ContainsKey("includeInactive");
 
         if (!usesCatalogQuery)
         {
-            var allProducts = await db.Products.AsNoTracking().OrderBy(x => x.Name).ToListAsync(cancellationToken);
+            var allProductsQuery = db.Products.AsNoTracking();
+            if (!includeInactive) allProductsQuery = allProductsQuery.Where(x => x.IsActive);
+            var allProducts = await allProductsQuery.OrderBy(x => x.Name).ToListAsync(cancellationToken);
             return Ok(allProducts.Select(ToDto));
         }
 
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 10, 100);
         var query = db.Products.AsNoTracking().AsQueryable();
+
+        if (!includeInactive)
+            query = query.Where(x => x.IsActive);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -63,7 +69,7 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         limit = Math.Clamp(limit, 1, 25);
         var term = q.Trim();
         var products = await db.Products.AsNoTracking()
-            .Where(x => x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term)))
+            .Where(x => x.IsActive && (x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term))))
             .OrderBy(x => x.Name.StartsWith(term) ? 0 : 1).ThenBy(x => x.Name).Take(limit).ToListAsync(cancellationToken);
         return Ok(products.Select(ToDto));
     }
