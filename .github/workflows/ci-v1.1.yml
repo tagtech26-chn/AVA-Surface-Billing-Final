@@ -1,0 +1,31 @@
+name: AVASurface v1.1 CI
+
+on:
+  push:
+    branches:
+      - feature/v1.1.0-enterprise-management
+  pull_request:
+    branches:
+      - feature/v1.1.0-enterprise-management
+      - release/v1.0.0-frozen
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: TypeScript checks
+        run: npm run lint
+      - name: Frontend production build
+        run: npm run build
+      - name: Backend build
+        run: dotnet build server-dotnet/AVASurface.Server.csproj --configuration Release --no-restore
