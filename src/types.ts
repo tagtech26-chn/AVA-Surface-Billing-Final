@@ -9,7 +9,7 @@ export interface PromoRule { id: string; code: string; title: string; descriptio
 export type TileQtyUnit = 'box' | 'pcs' | 'sqft' | 'sqmt' | 'set';
 export interface CartItem { product: Product; quantity: number; inputQuantity?: number; selectedUnit?: TileQtyUnit; itemWeightKg?: number; discountAmount: number; discountPercent?: number; finalUnitPrice: number; totalPrice: number; }
 export type PaymentMethod = 'CASH' | 'CARD' | 'UPI_QR' | 'BANK_TRANSFER' | 'STORE_CREDIT' | 'ON_ACCOUNT';
-export type InvoiceStatus = 'PAID' | 'UNPAID' | 'PARTIAL' | 'REFUNDED';
+export type InvoiceStatus = 'PAID' | 'UNPAID' | 'PARTIAL' | 'REFUNDED' | 'CANCELLED';
 export type DeliveryStatus = 'PENDING_DISPATCH' | 'PACKED' | 'IN_TRANSIT' | 'DELIVERED' | 'CANCELLED';
 export interface PaymentRecord { id: string; amount: number; method: PaymentMethod; referenceNumber?: string; date: string; notes?: string; }
 export type ManagerApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
