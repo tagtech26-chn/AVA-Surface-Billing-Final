@@ -129,10 +129,11 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
         var allowed = new[] { "ADMIN", "MANAGER", "BRANCH_MANAGER", "CASHIER", "BILLING_USER", "ACCOUNTANT", "WAREHOUSE" };
         if (!allowed.Contains(role)) return BadRequest("Unsupported role.");
         if (await db.AppUsers.AnyAsync(x => x.UserName == request.UserName.Trim(), cancellationToken)) return Conflict("Username already exists.");
+        if (request.CompanyId.HasValue && !await db.Companies.AnyAsync(x => x.Id == request.CompanyId.Value && x.IsActive, cancellationToken)) return BadRequest("Selected company is not active or does not exist.");
         var user = new AppUser { CompanyId = request.CompanyId, UserName = request.UserName.Trim(), DisplayName = request.DisplayName.Trim(), Role = role, PasswordHash = PasswordHasher.Hash(request.Password), IsActive = true };
         db.AppUsers.Add(user);
         await db.SaveChangesAsync(cancellationToken);
-        return Created($"/api/enterprise/users/{user.Id}", new { user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive });
+        return Created($"/api/enterprise/users/{user.Id}", new { user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive, user.CompanyId });
     }
 
     [Authorize(Roles = "ADMIN")]
@@ -141,9 +142,14 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
     {
         var user = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (user is null) return NotFound();
+        if (string.IsNullOrWhiteSpace(request.DisplayName)) return BadRequest("Display name is required.");
         var role = request.Role.Trim().ToUpperInvariant();
         if (role is not ("ADMIN" or "MANAGER" or "BRANCH_MANAGER" or "CASHIER" or "BILLING_USER" or "ACCOUNTANT" or "WAREHOUSE")) return BadRequest("Unsupported role.");
-        user.DisplayName = request.DisplayName.Trim(); user.Role = role; user.IsActive = request.IsActive;
+        if (request.CompanyId.HasValue && !await db.Companies.AnyAsync(x => x.Id == request.CompanyId.Value && x.IsActive, cancellationToken)) return BadRequest("Selected company is not active or does not exist.");
+        user.CompanyId = request.CompanyId;
+        user.DisplayName = request.DisplayName.Trim();
+        user.Role = role;
+        user.IsActive = request.IsActive;
         if (!string.IsNullOrWhiteSpace(request.Password)) user.PasswordHash = PasswordHasher.Hash(request.Password);
         await db.SaveChangesAsync(cancellationToken);
         return NoContent();
@@ -276,16 +282,11 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
     public sealed record CancellationRequest(string Reason, bool RestockItems = false, decimal RefundAmount = 0m);
     public sealed record ProductManagementRequest(string Sku, string Name, string? HsnCode, string? Unit, decimal CostPrice, decimal SellingPrice, decimal GstRate, decimal ReorderLevel, bool IsActive = true);
     public sealed record UserManagementRequest(string UserName, string DisplayName, string Role, string Password, Guid? CompanyId);
-    public sealed record UserUpdateRequest(string DisplayName, string Role, bool IsActive, string? Password);
+    public sealed record UserUpdateRequest(string DisplayName, string Role, bool IsActive, string? Password, Guid? CompanyId);
     public sealed record CustomerCategoryRequest(string Code, string Name, Guid? CompanyId);
     public sealed record CustomerCategoryAssignmentRequest(Guid CategoryId);
-    public sealed record CategoryPriceRequest(Guid CategoryId, Guid? CompanyId, Guid? ProductId, string? ProductGroup, decimal? FixedPrice, decimal? DiscountPercent, DateTime ValidFrom, DateTime ValidTo, int Priority = 0);
+    public sealed record CategoryPriceRequest(Guid? CompanyId, Guid CategoryId, Guid? ProductId, string? ProductGroup, decimal? FixedPrice, decimal? DiscountPercent, DateTime ValidFrom, DateTime ValidTo, int Priority = 0);
     public sealed record CustomerPriceRequest(Guid CustomerId, Guid ProductId, decimal? FixedPrice, decimal? DiscountPercent, DateTime ValidFrom, DateTime ValidTo);
     public sealed record PurchaseRequest(Guid? CompanyId, string PurchaseNumber, DateTime PurchaseDate, string SupplierName, decimal SubTotal, decimal TaxAmount, decimal GrandTotal, PurchaseLineRequest[]? Lines);
     public sealed record PurchaseLineRequest(Guid ProductId, decimal Quantity, decimal UnitCost, decimal TaxAmount, decimal LineTotal);
-}
-
-internal static class EnterpriseInvoiceExtensions
-{
-    public static void DeliveryStatusSafe(this Invoice invoice) { }
 }
