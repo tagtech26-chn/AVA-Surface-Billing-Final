@@ -1,221 +1,57 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { authHeaders, formatCurrency, formatDateTime } from '../lib/utils';
+import { authHeaders, formatCurrency } from '../lib/utils';
 import { UserProfile } from '../types';
 
 interface Props { activeUser: UserProfile; currencySymbol: string; }
 type Tab = 'cancellation' | 'users' | 'inventory' | 'categories' | 'pricing' | 'reports';
-
 const roles = ['ADMIN', 'MANAGER', 'BRANCH_MANAGER', 'CASHIER', 'BILLING_USER', 'ACCOUNTANT', 'WAREHOUSE'];
-const input = 'w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500';
-
-type UserForm = {
-  userName: string;
-  displayName: string;
-  role: string;
-  password: string;
-  confirmPassword: string;
-  companyId: string;
-};
-
-const emptyUser = (): UserForm => ({
-  userName: '',
-  displayName: '',
-  role: 'BILLING_USER',
-  password: '',
-  confirmPassword: '',
-  companyId: ''
-});
-
+const input = 'w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500';
+type Company = { id: string; code: string; legalName: string; isActive: boolean };
+type Product = { id: string; sku: string; name: string; hsnCode?: string | null; unit: string; costPrice: number; sellingPrice: number; stock: number; reorderLevel: number; taxRate: number; isActive: boolean };
+type UserRow = { id: string; userName: string; displayName: string; role: string; isActive: boolean; companyId?: string | null };
+const emptyUser = () => ({ userName: '', displayName: '', role: 'BILLING_USER', password: '', confirmPassword: '', companyId: '' });
 export const EnterpriseManagementView: React.FC<Props> = ({ activeUser, currencySymbol }) => {
   const isAdmin = activeUser.role === 'ADMIN';
+  const canManageInventory = ['ADMIN', 'MANAGER', 'BRANCH_MANAGER'].includes(activeUser.role);
   const [tab, setTab] = useState<Tab>(isAdmin ? 'users' : 'cancellation');
   const [message, setMessage] = useState('');
-  const [users, setUsers] = useState<any[]>([]);
-  const [companies, setCompanies] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
-  const [invoices, setInvoices] = useState<any[]>([]);
-  const [salesReport, setSalesReport] = useState<any>(null);
-  const [purchaseReport, setPurchaseReport] = useState<any>(null);
-  const [salespersonReport, setSalespersonReport] = useState<any>(null);
-  const [dashboard, setDashboard] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<any>(null);
-  const [newCategory, setNewCategory] = useState({ code: '', name: '' });
-  const [userForm, setUserForm] = useState<UserForm>(emptyUser());
-  const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  const [pricing, setPricing] = useState({ customerId: '', productId: '', fixedPrice: '', discountPercent: '' });
-  const [cancel, setCancel] = useState({ invoiceId: '', reason: '', restock: false, refund: '' });
-
+  const [users, setUsers] = useState<UserRow[]>([]); const [companies, setCompanies] = useState<Company[]>([]); const [products, setProducts] = useState<Product[]>([]); const [customers, setCustomers] = useState<any[]>([]); const [categories, setCategories] = useState<any[]>([]); const [invoices, setInvoices] = useState<any[]>([]);
+  const [salesReport, setSalesReport] = useState<any>(null); const [purchaseReport, setPurchaseReport] = useState<any>(null); const [salespersonReport, setSalespersonReport] = useState<any>(null); const [dashboard, setDashboard] = useState<any>(null);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null); const [editingUserId, setEditingUserId] = useState<string | null>(null); const [userForm, setUserForm] = useState(emptyUser());
+  const [newCategory, setNewCategory] = useState({ code: '', name: '' }); const [pricing, setPricing] = useState({ customerId: '', productId: '', fixedPrice: '', discountPercent: '' }); const [cancel, setCancel] = useState({ invoiceId: '', reason: '', restock: false, refund: '' });
   const loadCore = async () => {
-    setLoading(true); setMessage('');
     try {
-      const [p, c, i] = await Promise.all([
-        fetch('/api/products?page=1&pageSize=100', { headers: authHeaders() }).then(r => r.json()),
-        fetch('/api/customers', { headers: authHeaders() }).then(r => r.json()),
-        fetch('/api/invoices/history', { headers: authHeaders() }).then(r => r.json())
+      setMessage('');
+      const [p,c,i,co] = await Promise.all([
+        fetch('/api/products?page=1&pageSize=100',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Product API HTTP ${r.status}`))),
+        fetch('/api/customers',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Customer API HTTP ${r.status}`))),
+        fetch('/api/invoices/history',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Invoice API HTTP ${r.status}`))),
+        fetch('/api/companies',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Company API HTTP ${r.status}`)))
       ]);
-      setProducts(Array.isArray(p) ? p : (p.items || []));
-      setCustomers(Array.isArray(c) ? c : (c.items || []));
-      setInvoices(Array.isArray(i) ? i : (i.items || []));
-      if (isAdmin) {
-        const [u, companyResponse] = await Promise.all([
-          fetch('/api/enterprise/users', { headers: authHeaders() }),
-          fetch('/api/companies', { headers: authHeaders() })
-        ]);
-        if (u.ok) setUsers(await u.json());
-        if (companyResponse.ok) {
-          const companyPayload = await companyResponse.json();
-          setCompanies(Array.isArray(companyPayload) ? companyPayload : (companyPayload.items || []));
-        }
-      }
-      const cat = await fetch('/api/enterprise/customer-categories', { headers: authHeaders() });
-      if (cat.ok) setCategories(await cat.json());
-    } catch (e) { setMessage(e instanceof Error ? e.message : 'Unable to load enterprise data.'); }
-    finally { setLoading(false); }
+      const rows = Array.isArray(p)?p:(p.items||[]); setProducts(rows.map((x:any)=>({...x,stock:Number(x.stock??0),taxRate:Number(x.taxRate??0),isActive:x.isActive!==false})));
+      setCustomers(Array.isArray(c)?c:(c.items||[])); setInvoices(Array.isArray(i)?i:(i.items||[])); setCompanies((Array.isArray(co)?co:[]).filter((x:Company)=>x.isActive!==false));
+      if(isAdmin){ const u=await fetch('/api/enterprise/users',{headers:authHeaders()}); if(u.ok)setUsers(await u.json()); const cat=await fetch('/api/enterprise/customer-categories',{headers:authHeaders()}); if(cat.ok)setCategories(await cat.json()); }
+    }catch(e){setMessage(e instanceof Error?e.message:'Unable to load enterprise data.');}
   };
-
-  useEffect(() => { void loadCore(); }, []);
-
-  const cancelableInvoices = useMemo(() => invoices.filter(x => x.Status !== 'CANCELLED' && x.status !== 'CANCELLED' && x.WorkflowStatus !== 'CANCELLED' && x.workflowStatus !== 'CANCELLED'), [invoices]);
-
-  const startEditUser = (user: any) => {
-    setEditingUserId(user.id);
-    setUserForm({
-      userName: user.userName || '',
-      displayName: user.displayName || '',
-      role: user.role || 'BILLING_USER',
-      password: '',
-      confirmPassword: '',
-      companyId: user.companyId || ''
-    });
-    setMessage('');
-  };
-
-  const resetUserPassword = (user: any) => {
-    startEditUser(user);
-    setMessage(`Enter and confirm a new password for ${user.userName}.`);
-  };
-
-  const saveUser = async () => {
-    if (!userForm.userName.trim() || !userForm.displayName.trim()) return setMessage('Username and display name are required.');
-    if (!editingUserId && !userForm.password) return setMessage('Initial password is required.');
-    if (userForm.password !== userForm.confirmPassword) return setMessage('Password and confirm password do not match.');
-    const body = {
-      userName: userForm.userName.trim(),
-      displayName: userForm.displayName.trim(),
-      role: userForm.role,
-      companyId: userForm.companyId ? userForm.companyId : null,
-      password: userForm.password || null,
-      isActive: true
-    };
-    const response = await fetch(editingUserId ? `/api/enterprise/users/${editingUserId}` : '/api/enterprise/users', {
-      method: editingUserId ? 'PUT' : 'POST',
-      headers: authHeaders(true),
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) return setMessage(await response.text());
-    setUserForm(emptyUser());
-    setEditingUserId(null);
-    await loadCore();
-    setMessage(editingUserId ? 'User updated successfully.' : 'User created successfully.');
-  };
-
-  const deactivateUser = async (user: any) => {
-    const response = await fetch(`/api/enterprise/users/${user.id}`, {
-      method: 'PUT',
-      headers: authHeaders(true),
-      body: JSON.stringify({ displayName: user.displayName, role: user.role, isActive: false, password: null, companyId: user.companyId ?? null })
-    });
-    if (!response.ok) return setMessage(await response.text());
-    await loadCore();
-    setMessage('User deactivated.');
-  };
-
-  const reactivateUser = async (user: any) => {
-    const response = await fetch(`/api/enterprise/users/${user.id}`, {
-      method: 'PUT',
-      headers: authHeaders(true),
-      body: JSON.stringify({ displayName: user.displayName, role: user.role, isActive: true, password: null, companyId: user.companyId ?? null })
-    });
-    if (!response.ok) return setMessage(await response.text());
-    await loadCore();
-    setMessage('User activated.');
-  };
-
-  const saveProduct = async () => {
-    if (!editingProduct) return;
-    const response = await fetch(`/api/enterprise/products/${editingProduct.id}`, { method: 'PUT', headers: authHeaders(true), body: JSON.stringify({ sku: editingProduct.sku, name: editingProduct.name, hsnCode: editingProduct.hsnCode, unit: editingProduct.unit, costPrice: Number(editingProduct.costPrice), sellingPrice: Number(editingProduct.sellingPrice), gstRate: Number(editingProduct.gstRate), reorderLevel: Number(editingProduct.reorderLevel), isActive: editingProduct.isActive !== false }) });
-    if (!response.ok) return setMessage(await response.text()); setEditingProduct(null); await loadCore(); setMessage('Product updated.');
-  };
-
-  const deactivateProduct = async (id: string) => {
-    const response = await fetch(`/api/enterprise/products/${id}/deactivate`, { method: 'POST', headers: authHeaders(true) });
-    if (!response.ok) return setMessage(await response.text()); await loadCore();
-  };
-
-  const createCategory = async () => {
-    const response = await fetch('/api/enterprise/customer-categories', { method: 'POST', headers: authHeaders(true), body: JSON.stringify(newCategory) });
-    if (!response.ok) return setMessage(await response.text()); setNewCategory({ code: '', name: '' }); await loadCore();
-  };
-
-  const saveCustomerPrice = async () => {
-    const response = await fetch('/api/enterprise/customer-prices', { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ customerId: pricing.customerId, productId: pricing.productId, fixedPrice: pricing.fixedPrice ? Number(pricing.fixedPrice) : null, discountPercent: pricing.discountPercent ? Number(pricing.discountPercent) : null, validFrom: new Date().toISOString(), validTo: new Date(new Date().setFullYear(new Date().getFullYear() + 10)).toISOString() }) });
-    if (!response.ok) return setMessage(await response.text()); setMessage('Customer-specific pricing saved.');
-  };
-
-  const cancelInvoice = async () => {
-    if (!cancel.invoiceId || !cancel.reason.trim()) return setMessage('Select an invoice and enter a cancellation reason.');
-    const response = await fetch(`/api/enterprise/invoices/${cancel.invoiceId}/cancel`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ reason: cancel.reason.trim(), restockItems: cancel.restock, refundAmount: Number(cancel.refund || 0) }) });
-    if (!response.ok) return setMessage(await response.text());
-    setCancel({ invoiceId: '', reason: '', restock: false, refund: '' }); await loadCore(); setMessage('Invoice cancelled and audit trail recorded.');
-  };
-
-  const loadReports = async () => {
-    const [s, p, sp, d] = await Promise.all([
-      fetch('/api/enterprise/reports/sales', { headers: authHeaders() }).then(r => r.json()),
-      fetch('/api/enterprise/reports/purchase', { headers: authHeaders() }).then(r => r.json()),
-      fetch('/api/enterprise/reports/salespersons', { headers: authHeaders() }).then(r => r.json()),
-      fetch('/api/enterprise/reports/management-dashboard', { headers: authHeaders() }).then(r => r.json())
-    ]); setSalesReport(s); setPurchaseReport(p); setSalespersonReport(sp); setDashboard(d);
-  };
-
+  useEffect(()=>{void loadCore();},[isAdmin]);
+  const cancelableInvoices=useMemo(()=>invoices.filter(x=>(x.status??x.Status)!=='CANCELLED'&&(x.workflowStatus??x.WorkflowStatus)!=='CANCELLED'),[invoices]);
+  const saveUser=async()=>{ if(!isAdmin)return; if(!userForm.userName.trim()||!userForm.displayName.trim())return setMessage('Username and display name are required.'); if(!editingUserId&&!userForm.password)return setMessage('Initial password is required.'); if(userForm.password!==userForm.confirmPassword)return setMessage('Password and confirm password do not match.'); const body={userName:userForm.userName.trim(),displayName:userForm.displayName.trim(),role:userForm.role,companyId:userForm.companyId||null,password:userForm.password||null,isActive:true}; const id=editingUserId; const r=await fetch(id?`/api/enterprise/users/${id}`:'/api/enterprise/users',{method:id?'PUT':'POST',headers:authHeaders(true),body:JSON.stringify(body)}); if(!r.ok)return setMessage(await r.text()); setUserForm(emptyUser());setEditingUserId(null);await loadCore();setMessage(id?'User updated successfully.':'User created successfully.'); };
+  const editUser=(u:UserRow)=>{setEditingUserId(u.id);setUserForm({userName:u.userName,displayName:u.displayName,role:u.role,password:'',confirmPassword:'',companyId:u.companyId||''});setTab('users');};
+  const setUserActive=async(u:UserRow,isActive:boolean)=>{const r=await fetch(`/api/enterprise/users/${u.id}`,{method:'PUT',headers:authHeaders(true),body:JSON.stringify({displayName:u.displayName,role:u.role,isActive,password:null,companyId:u.companyId||null})});if(!r.ok)return setMessage(await r.text());await loadCore();setMessage(isActive?'User activated.':'User deactivated.');};
+  const saveProduct=async()=>{if(!editingProduct)return;const body={sku:editingProduct.sku,name:editingProduct.name,hsnCode:editingProduct.hsnCode||null,unit:editingProduct.unit||'PCS',costPrice:Number(editingProduct.costPrice)||0,sellingPrice:Number(editingProduct.sellingPrice)||0,gstRate:Number(editingProduct.taxRate)||0,stock:Number(editingProduct.stock)||0,reorderLevel:Number(editingProduct.reorderLevel)||0,isActive:editingProduct.isActive!==false};const r=await fetch(`/api/enterprise/inventory/${editingProduct.id}`,{method:'PUT',headers:authHeaders(true),body:JSON.stringify(body)});if(!r.ok)return setMessage(await r.text());setEditingProduct(null);await loadCore();setMessage('Inventory item updated successfully.');};
+  const setProductActive=async(p:Product,isActive:boolean)=>{const r=await fetch(`/api/enterprise/inventory/${p.id}/${isActive?'activate':'deactivate'}`,{method:'POST',headers:authHeaders(true)});if(!r.ok)return setMessage(await r.text());await loadCore();setMessage(isActive?`${p.name} activated.`:`${p.name} deactivated.`);};
+  const createCategory=async()=>{const r=await fetch('/api/enterprise/customer-categories',{method:'POST',headers:authHeaders(true),body:JSON.stringify(newCategory)});if(!r.ok)return setMessage(await r.text());setNewCategory({code:'',name:''});await loadCore();setMessage('Customer category created.');};
+  const saveCustomerPrice=async()=>{if(!pricing.customerId||!pricing.productId)return setMessage('Select customer and product.');if(!pricing.fixedPrice&&!pricing.discountPercent)return setMessage('Enter fixed price or discount percentage.');const r=await fetch('/api/enterprise/customer-prices',{method:'POST',headers:authHeaders(true),body:JSON.stringify({customerId:pricing.customerId,productId:pricing.productId,fixedPrice:pricing.fixedPrice?Number(pricing.fixedPrice):null,discountPercent:pricing.discountPercent?Number(pricing.discountPercent):null,validFrom:new Date().toISOString(),validTo:new Date(new Date().setFullYear(new Date().getFullYear()+10)).toISOString()})});if(!r.ok)return setMessage(await r.text());setMessage('Customer-specific pricing saved.');};
+  const cancelInvoice=async()=>{if(!cancel.invoiceId||!cancel.reason.trim())return setMessage('Select an invoice and enter a cancellation reason.');const r=await fetch(`/api/enterprise/invoices/${cancel.invoiceId}/cancel`,{method:'POST',headers:authHeaders(true),body:JSON.stringify({reason:cancel.reason.trim(),restockItems:cancel.restock,refundAmount:Number(cancel.refund||0)})});if(!r.ok)return setMessage(await r.text());setCancel({invoiceId:'',reason:'',restock:false,refund:''});await loadCore();setMessage('Invoice cancelled and audit trail recorded.');};
+  const loadReports=async()=>{const[s,p,sp,d]=await Promise.all([fetch('/api/enterprise/reports/sales',{headers:authHeaders()}).then(r=>r.json()),fetch('/api/enterprise/reports/purchase',{headers:authHeaders()}).then(r=>r.json()),fetch('/api/enterprise/reports/salespersons',{headers:authHeaders()}).then(r=>r.json()),fetch('/api/enterprise/reports/management-dashboard',{headers:authHeaders()}).then(r=>r.json())]);setSalesReport(s);setPurchaseReport(p);setSalespersonReport(sp);setDashboard(d);};
   return <div className="space-y-5">
-    <div className="flex flex-wrap gap-2">
-      {(isAdmin || activeUser.role === 'MANAGER' || activeUser.role === 'BRANCH_MANAGER') && <button onClick={() => setTab('cancellation')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'cancellation' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Invoice Cancellation</button>}
-      {isAdmin && <button onClick={() => setTab('users')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'users' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Users / Roles</button>}
-      {(isAdmin || activeUser.role === 'MANAGER' || activeUser.role === 'BRANCH_MANAGER') && <button onClick={() => setTab('inventory')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'inventory' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Inventory Master</button>}
-      {isAdmin && <button onClick={() => setTab('categories')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'categories' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Customer Categories</button>}
-      {(isAdmin || activeUser.role === 'MANAGER' || activeUser.role === 'BRANCH_MANAGER') && <button onClick={() => setTab('pricing')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'pricing' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Pricing Engine</button>}
-      <button onClick={() => { setTab('reports'); void loadReports(); }} className={`px-4 py-2 rounded-xl text-xs font-black ${tab === 'reports' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}>Reports / Dashboard</button>
-    </div>
-    {message && <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-950/20 text-amber-200 text-xs">{message}</div>}
-
-    {tab === 'cancellation' && <section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4"><h2 className="text-xl font-black">Cancel Invoice</h2><p className="text-xs text-slate-400">Cancellation is non-destructive, audited, and keeps the original document in history.</p><select className={input} value={cancel.invoiceId} onChange={e => setCancel(v => ({ ...v, invoiceId: e.target.value }))}><option value="">Select invoice</option>{cancelableInvoices.map(x => <option key={x.id} value={x.id}>{x.invoiceNumber || x.quotationNumber} — {formatCurrency(Number(x.grandTotal || 0), currencySymbol)}</option>)}</select><textarea className={input} placeholder="Cancellation reason" value={cancel.reason} onChange={e => setCancel(v => ({ ...v, reason: e.target.value }))}/><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><input className={input} type="number" min="0" placeholder="Refund amount" value={cancel.refund} onChange={e => setCancel(v => ({ ...v, refund: e.target.value }))}/><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={cancel.restock} onChange={e => setCancel(v => ({ ...v, restock: e.target.checked }))}/> Restock cancelled invoice items</label></div><button onClick={() => void cancelInvoice()} className="px-5 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-black">Cancel Invoice</button></section>}
-
-    {tab === 'users' && isAdmin && <section className="space-y-4">
-      <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
-        <div className="flex items-center justify-between gap-3 mb-4"><div><h2 className="text-xl font-black">User / Role Management</h2><p className="text-xs text-slate-400 mt-1">Create, edit, reset passwords and activate/deactivate users.</p></div>{editingUserId && <button onClick={() => { setEditingUserId(null); setUserForm(emptyUser()); setMessage(''); }} className="px-3 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">New User</button>}</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <input className={input} placeholder="Username" value={userForm.userName} disabled={!!editingUserId} onChange={e => setUserForm(v => ({ ...v, userName: e.target.value }))}/>
-          <input className={input} placeholder="Display name" value={userForm.displayName} onChange={e => setUserForm(v => ({ ...v, displayName: e.target.value }))}/>
-          <select className={input} value={userForm.role} onChange={e => setUserForm(v => ({ ...v, role: e.target.value }))}>{roles.map(r => <option key={r}>{r}</option>)}</select>
-          <select className={input} value={userForm.companyId} onChange={e => setUserForm(v => ({ ...v, companyId: e.target.value }))}><option value="">All Companies / Unassigned</option>{companies.map(c => <option key={c.id} value={c.id}>{c.code ? `${c.code} — ` : ''}{c.legalName || c.name}</option>)}</select>
-          <input className={input} type="password" placeholder={editingUserId ? 'New password (optional)' : 'Initial password'} value={userForm.password} onChange={e => setUserForm(v => ({ ...v, password: e.target.value }))}/>
-          <input className={input} type="password" placeholder="Confirm password" value={userForm.confirmPassword} onChange={e => setUserForm(v => ({ ...v, confirmPassword: e.target.value }))}/>
-        </div>
-        <div className="flex gap-2 mt-3"><button onClick={() => void saveUser()} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black">{editingUserId ? 'Save User' : 'Add User'}</button>{editingUserId && <button onClick={() => resetUserPassword(users.find(u => u.id === editingUserId))} className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black">Reset Password</button>}</div>
-      </div>
-      <div className="grid gap-3">{users.map(u => <div key={u.id} className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3"><div><div className="font-black text-white">{u.displayName}</div><div className="text-xs text-slate-400 mt-1">{u.userName} · {u.role}{u.companyId ? ' · Company assigned' : ' · All companies'}</div><div className="text-[10px] mt-1 font-bold uppercase tracking-wider ${u.isActive ? 'text-emerald-400' : 'text-rose-400'}">{u.isActive ? 'ACTIVE' : 'INACTIVE'}</div></div><div className="flex gap-2 flex-wrap"><button onClick={() => startEditUser(u)} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[10px] font-black">Edit</button><button onClick={() => resetUserPassword(u)} className="px-3 py-1.5 rounded-lg bg-amber-950 text-amber-300 text-[10px] font-black">Reset Password</button>{u.isActive ? <button onClick={() => void deactivateUser(u)} className="px-3 py-1.5 rounded-lg bg-rose-950 text-rose-300 text-[10px] font-black">Deactivate</button> : <button onClick={() => void reactivateUser(u)} className="px-3 py-1.5 rounded-lg bg-emerald-950 text-emerald-300 text-[10px] font-black">Activate</button>}</div></div>)}</div>
-    </section>}
-
-    {tab === 'inventory' && <section className="space-y-3"><div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h2 className="text-xl font-black">Inventory Edit / Deactivate</h2></div>{products.map(p => <div key={p.id} className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3"><div className="min-w-0"><div className="font-black text-white truncate">{p.name}</div><div className="text-xs text-slate-400">{p.sku} · {formatCurrency(Number(p.sellingPrice || 0), currencySymbol)} · Stock {p.stock}</div></div><div className="flex gap-2"><button onClick={() => setEditingProduct({ ...p })} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[10px] font-black">Edit</button><button onClick={() => void deactivateProduct(p.id)} className="px-3 py-1.5 rounded-lg bg-rose-950 text-rose-300 text-[10px] font-black">Deactivate</button></div></div>)}{editingProduct && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"><div className="w-full max-w-2xl p-6 rounded-2xl bg-slate-900 border border-slate-700 space-y-3"><h3 className="text-lg font-black">Edit Product</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{['sku','name','hsnCode','unit','costPrice','sellingPrice','gstRate','reorderLevel'].map(k => <input key={k} className={input} value={editingProduct[k] ?? ''} placeholder={k} onChange={e => setEditingProduct((v:any) => ({ ...v, [k]: e.target.value }))}/>)}</div><div className="flex gap-2 justify-end"><button onClick={() => setEditingProduct(null)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-black">Cancel</button><button onClick={() => void saveProduct()} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black">Save</button></div></div></div>}</section>}
-
-    {tab === 'categories' && <section className="space-y-4"><div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h2 className="text-xl font-black">Customer Categories</h2><div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4"><input className={input} placeholder="Code e.g. WHOLESALE" value={newCategory.code} onChange={e => setNewCategory(v => ({ ...v, code: e.target.value }))}/><input className={input} placeholder="Name e.g. Wholesale" value={newCategory.name} onChange={e => setNewCategory(v => ({ ...v, name: e.target.value }))}/><button onClick={() => void createCategory()} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black">Create Category</button></div></div><div className="grid gap-3">{categories.map(c => <div key={c.id} className="p-4 rounded-xl bg-slate-900 border border-slate-800"><div className="font-black">{c.name}</div><div className="text-xs text-slate-500">{c.code}</div></div>)}</div></section>}
-
-    {tab === 'pricing' && <section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4"><h2 className="text-xl font-black">Customer-specific Pricing</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><select className={input} value={pricing.customerId} onChange={e => setPricing(v => ({ ...v, customerId: e.target.value }))}><option value="">Customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><select className={input} value={pricing.productId} onChange={e => setPricing(v => ({ ...v, productId: e.target.value }))}><option value="">Product</option>{products.map(p => <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>)}</select><input className={input} type="number" placeholder="Fixed price" value={pricing.fixedPrice} onChange={e => setPricing(v => ({ ...v, fixedPrice: e.target.value }))}/><input className={input} type="number" placeholder="Discount %" value={pricing.discountPercent} onChange={e => setPricing(v => ({ ...v, discountPercent: e.target.value }))}/></div><button onClick={() => void saveCustomerPrice()} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black">Save Customer Price</button><p className="text-xs text-slate-400">Pricing precedence is customer-specific first, then customer-category, then standard product price.</p></section>}
-
-    {tab === 'reports' && <section className="space-y-4"><div className="flex gap-2"><button onClick={() => void loadReports()} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black">Refresh Reports</button></div>{dashboard && <div className="grid grid-cols-2 md:grid-cols-5 gap-3">{[['Today Sales',dashboard.todaySales],['Month Sales',dashboard.monthSales],['Month Invoices',dashboard.monthInvoices],['Cancelled',dashboard.monthCancelled],['Conversion %',dashboard.quotationConversionPercent]].map(([label,value]) => <div key={String(label)} className="p-4 rounded-xl bg-slate-900 border border-slate-800"><div className="text-[10px] text-slate-500">{label}</div><div className="text-lg font-black text-white mt-1">{typeof value === 'number' && String(label).includes('Sales') ? formatCurrency(value, currencySymbol) : value}</div></div>)}</div>}{salesReport && <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h3 className="font-black">Sales Report</h3><div className="text-sm text-emerald-300 mt-2">{formatCurrency(salesReport.totalSales, currencySymbol)} · {salesReport.totalInvoices} invoices</div></div>}{purchaseReport && <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h3 className="font-black">Purchase Report</h3><div className="text-sm text-amber-300 mt-2">{formatCurrency(purchaseReport.totalPurchase, currencySymbol)} · {purchaseReport.totalDocuments} documents</div></div>}{salespersonReport && <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h3 className="font-black">Salesperson Report</h3><div className="mt-3 space-y-2">{salespersonReport.summary?.map((r:any) => <div key={r.salesperson} className="flex justify-between text-xs border-b border-slate-800 pb-2"><span>{r.salesperson || 'Unassigned'}</span><span className="font-black text-white">{formatCurrency(r.sales, currencySymbol)}</span></div>)}</div></div>}</section>}
+    <div className="flex flex-wrap gap-2">{canManageInventory&&<button onClick={()=>setTab('cancellation')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab==='cancellation'?'bg-rose-600 text-white':'bg-slate-800 text-slate-300'}`}>Invoice Cancellation</button>}{isAdmin&&<button onClick={()=>setTab('users')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab==='users'?'bg-indigo-600 text-white':'bg-slate-800 text-slate-300'}`}>Users / Roles</button>}{canManageInventory&&<button onClick={()=>setTab('inventory')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab==='inventory'?'bg-indigo-600 text-white':'bg-slate-800 text-slate-300'}`}>Inventory Master</button>}{isAdmin&&<button onClick={()=>setTab('categories')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab==='categories'?'bg-indigo-600 text-white':'bg-slate-800 text-slate-300'}`}>Customer Categories</button>}{canManageInventory&&<button onClick={()=>setTab('pricing')} className={`px-4 py-2 rounded-xl text-xs font-black ${tab==='pricing'?'bg-indigo-600 text-white':'bg-slate-800 text-slate-300'}`}>Pricing Engine</button>}<button onClick={()=>{setTab('reports');void loadReports();}} className={`px-4 py-2 rounded-xl text-xs font-black ${tab==='reports'?'bg-emerald-600 text-white':'bg-slate-800 text-slate-300'}`}>Reports / Dashboard</button></div>
+    {message&&<div className="p-3 rounded-xl border border-amber-500/30 bg-amber-950/20 text-amber-200 text-xs">{message}</div>}
+    {tab==='cancellation'&&<section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4"><h2 className="text-xl font-black text-white">Cancel Invoice</h2><p className="text-xs text-slate-400">Cancellation is non-destructive, audited, and keeps the original document in history.</p><select className={input} value={cancel.invoiceId} onChange={e=>setCancel(v=>({...v,invoiceId:e.target.value}))}><option value="">Select invoice</option>{cancelableInvoices.map(x=><option key={x.id} value={x.id}>{x.invoiceNumber||x.quotationNumber} — {formatCurrency(Number(x.grandTotal||0),currencySymbol)}</option>)}</select><textarea className={input} placeholder="Cancellation reason" value={cancel.reason} onChange={e=>setCancel(v=>({...v,reason:e.target.value}))}/><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><input className={input} type="number" min="0" placeholder="Refund amount" value={cancel.refund} onChange={e=>setCancel(v=>({...v,refund:e.target.value}))}/><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={cancel.restock} onChange={e=>setCancel(v=>({...v,restock:e.target.checked}))}/> Restock cancelled invoice items</label></div><button onClick={()=>void cancelInvoice()} className="px-5 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-black">Cancel Invoice</button></section>}
+    {tab==='users'&&isAdmin&&<section className="space-y-4"><div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><div className="flex items-center justify-between"><h2 className="text-xl font-black text-white">User / Role Management</h2>{editingUserId&&<button onClick={()=>{setEditingUserId(null);setUserForm(emptyUser());}} className="text-xs text-slate-400">Cancel Edit</button>}</div><div className="grid grid-cols-1 md:grid-cols-6 gap-3 mt-4"><input className={input} placeholder="Username" value={userForm.userName} onChange={e=>setUserForm(v=>({...v,userName:e.target.value}))}/><input className={input} placeholder="Display name" value={userForm.displayName} onChange={e=>setUserForm(v=>({...v,displayName:e.target.value}))}/><select className={input} value={userForm.role} onChange={e=>setUserForm(v=>({...v,role:e.target.value}))}>{roles.map(r=><option key={r}>{r}</option>)}</select><select className={input} value={userForm.companyId} onChange={e=>setUserForm(v=>({...v,companyId:e.target.value}))}><option value="">All companies</option>{companies.map(c=><option key={c.id} value={c.id}>{c.code} · {c.legalName}</option>)}</select><input className={input} type="password" placeholder={editingUserId?'New password (optional)':'Initial password'} value={userForm.password} onChange={e=>setUserForm(v=>({...v,password:e.target.value}))}/><input className={input} type="password" placeholder="Confirm password" value={userForm.confirmPassword} onChange={e=>setUserForm(v=>({...v,confirmPassword:e.target.value}))}/></div><button onClick={()=>void saveUser()} className="mt-3 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black">{editingUserId?'Update User':'Add User'}</button></div><div className="grid gap-3">{users.map(u=><div key={u.id} className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3"><div><div className="font-black text-white">{u.displayName}</div><div className="text-xs text-slate-400">{u.userName} · {u.role} · {companies.find(c=>c.id===u.companyId)?.legalName||'All companies'}</div><div className={`text-[10px] font-black mt-1 ${u.isActive?'text-emerald-400':'text-rose-400'}`}>{u.isActive?'ACTIVE':'INACTIVE'}</div></div><div className="flex gap-2"><button onClick={()=>editUser(u)} className="px-3 py-1.5 rounded-lg bg-indigo-600/20 text-indigo-300 text-[10px] font-black">Edit / Reset Password</button><button onClick={()=>void setUserActive(u,!u.isActive)} className={`px-3 py-1.5 rounded-lg text-[10px] font-black ${u.isActive?'bg-rose-950 text-rose-300':'bg-emerald-950 text-emerald-300'}`}>{u.isActive?'Deactivate':'Activate'}</button></div></div>)}</div></section>}
+    {tab==='inventory'&&canManageInventory&&<section className="space-y-3"><div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><div className="flex items-center justify-between"><div><h2 className="text-xl font-black text-white">Inventory Edit / Deactivate</h2><p className="text-xs text-slate-400 mt-1">Edit quantity, price, HSN and GST. Deactivated items remain in the master and can be activated again.</p></div><div className="text-right"><div className="text-[10px] text-slate-500">PRODUCTS</div><div className="text-xl font-black text-white">{products.length}</div><div className="text-[10px] text-indigo-300">TOTAL QTY {products.reduce((s,p)=>s+Number(p.stock||0),0).toLocaleString()}</div></div></div></div>{products.map(p=><div key={p.id} className={`p-4 rounded-xl bg-slate-900 border ${p.isActive?'border-slate-800':'border-rose-900/60 opacity-70'} flex items-center justify-between gap-3`}><div className="min-w-0"><div className="font-black text-white truncate">{p.name}</div><div className="text-xs text-slate-400">{p.sku} · {p.unit} · {formatCurrency(Number(p.sellingPrice||0),currencySymbol)} · Qty {Number(p.stock||0).toLocaleString()}</div><div className={`text-[10px] font-black mt-1 ${p.isActive?'text-emerald-400':'text-rose-400'}`}>{p.isActive?'ACTIVE':'DEACTIVATED'}</div></div><div className="flex gap-2"><button onClick={()=>setEditingProduct({...p})} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[10px] font-black">Edit</button><button onClick={()=>void setProductActive(p,!p.isActive)} className={`px-3 py-1.5 rounded-lg text-[10px] font-black ${p.isActive?'bg-rose-950 text-rose-300':'bg-emerald-950 text-emerald-300'}`}>{p.isActive?'Deactivate':'Activate'}</button></div></div>)}{editingProduct&&<div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"><div className="w-full max-w-2xl p-6 rounded-2xl bg-slate-900 border border-slate-700 space-y-4"><div className="flex justify-between items-center"><div><p className="text-[10px] uppercase tracking-widest text-indigo-400 font-black">Stock Item Master</p><h3 className="text-lg font-black text-white">Edit Product</h3></div><button onClick={()=>setEditingProduct(null)} className="text-slate-400 text-xl">×</button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><label className="text-xs text-slate-400">SKU<input className={input} value={editingProduct.sku} onChange={e=>setEditingProduct(v=>v?({...v,sku:e.target.value}):v)}/></label><label className="text-xs text-slate-400">Item Name<input className={input} value={editingProduct.name} onChange={e=>setEditingProduct(v=>v?({...v,name:e.target.value}):v)}/></label><label className="text-xs text-slate-400">HSN Code<input className={input} value={editingProduct.hsnCode??''} onChange={e=>setEditingProduct(v=>v?({...v,hsnCode:e.target.value}):v)}/></label><label className="text-xs text-slate-400">Unit<input className={input} value={editingProduct.unit} onChange={e=>setEditingProduct(v=>v?({...v,unit:e.target.value}):v)}/></label><label className="text-xs text-slate-400">Cost Price<input type="number" step="0.01" className={input} value={editingProduct.costPrice} onChange={e=>setEditingProduct(v=>v?({...v,costPrice:Number(e.target.value)}):v)}/></label><label className="text-xs text-slate-400">Selling Price<input type="number" step="0.01" className={input} value={editingProduct.sellingPrice} onChange={e=>setEditingProduct(v=>v?({...v,sellingPrice:Number(e.target.value)}):v)}/></label><label className="text-xs text-slate-400">GST Rate (%)<input type="number" min="0" max="100" step="0.01" className={input} value={editingProduct.taxRate} onChange={e=>setEditingProduct(v=>v?({...v,taxRate:Number(e.target.value)}):v)}/></label><label className="text-xs text-slate-400">Current / Opening Quantity<input type="number" min="0" step="0.001" className={input} value={editingProduct.stock} onChange={e=>setEditingProduct(v=>v?({...v,stock:Number(e.target.value)}):v)}/></label><label className="text-xs text-slate-400">Reorder Level<input type="number" min="0" step="0.001" className={input} value={editingProduct.reorderLevel} onChange={e=>setEditingProduct(v=>v?({...v,reorderLevel:Number(e.target.value)}):v)}/></label><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={editingProduct.isActive} onChange={e=>setEditingProduct(v=>v?({...v,isActive:e.target.checked}):v)}/> Active item</label></div><div className="flex gap-2 justify-end"><button onClick={()=>setEditingProduct(null)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-black">Cancel</button><button onClick={()=>void saveProduct()} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black">Save</button></div></div></div>}</section>}
+    {tab==='categories'&&isAdmin&&<section className="space-y-4"><div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h2 className="text-xl font-black text-white">Customer Categories</h2><div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4"><input className={input} placeholder="Code e.g. WHOLESALE" value={newCategory.code} onChange={e=>setNewCategory(v=>({...v,code:e.target.value}))}/><input className={input} placeholder="Name e.g. Wholesale" value={newCategory.name} onChange={e=>setNewCategory(v=>({...v,name:e.target.value}))}/><button onClick={()=>void createCategory()} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black">Create Category</button></div></div><div className="grid gap-3">{categories.map(c=><div key={c.id} className="p-4 rounded-xl bg-slate-900 border border-slate-800"><div className="font-black text-white">{c.name}</div><div className="text-xs text-slate-500">{c.code}</div></div>)}</div></section>}
+    {tab==='pricing'&&canManageInventory&&<section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4"><h2 className="text-xl font-black text-white">Customer-specific Pricing</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><select className={input} value={pricing.customerId} onChange={e=>setPricing(v=>({...v,customerId:e.target.value}))}><option value="">Customer</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><select className={input} value={pricing.productId} onChange={e=>setPricing(v=>({...v,productId:e.target.value}))}><option value="">Product</option>{products.filter(p=>p.isActive).map(p=><option key={p.id} value={p.id}>{p.name} · {p.sku}</option>)}</select><input className={input} type="number" placeholder="Fixed price" value={pricing.fixedPrice} onChange={e=>setPricing(v=>({...v,fixedPrice:e.target.value}))}/><input className={input} type="number" placeholder="Discount %" value={pricing.discountPercent} onChange={e=>setPricing(v=>({...v,discountPercent:e.target.value}))}/></div><button onClick={()=>void saveCustomerPrice()} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-black">Save Customer Price</button><p className="text-xs text-slate-400">Pricing precedence is customer-specific first, then customer-category, then standard product price.</p></section>}
+    {tab==='reports'&&<section className="space-y-4"><button onClick={()=>void loadReports()} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black">Refresh Reports</button>{dashboard&&<div className="grid grid-cols-2 md:grid-cols-5 gap-3">{[['Today Sales',dashboard.todaySales],['Month Sales',dashboard.monthSales],['Month Invoices',dashboard.monthInvoices],['Cancelled',dashboard.monthCancelled],['Conversion %',dashboard.quotationConversionPercent]].map(([label,value])=><div key={String(label)} className="p-4 rounded-xl bg-slate-900 border border-slate-800"><div className="text-[10px] text-slate-500">{label}</div><div className="text-lg font-black text-white mt-1">{typeof value==='number'&&String(label).includes('Sales')?formatCurrency(value,currencySymbol):value}</div></div>)}</div>}{salesReport&&<div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h3 className="font-black text-white">Sales Report</h3><div className="text-sm text-emerald-300 mt-2">{formatCurrency(salesReport.totalSales,currencySymbol)} · {salesReport.totalInvoices} invoices</div></div>}{purchaseReport&&<div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h3 className="font-black text-white">Purchase Report</h3><div className="text-sm text-amber-300 mt-2">{formatCurrency(purchaseReport.totalPurchase,currencySymbol)} · {purchaseReport.totalDocuments} documents</div></div>}{salespersonReport&&<div className="p-5 rounded-2xl bg-slate-900 border border-slate-800"><h3 className="font-black text-white">Salesperson Report</h3>{salespersonReport.summary?.map((r:any)=><div key={r.salesperson} className="flex justify-between text-xs border-b border-slate-800 py-2"><span className="text-slate-300">{r.salesperson||'Unassigned'}</span><span className="font-black text-white">{formatCurrency(r.sales,currencySymbol)}</span></div>)}</div>}</section>}
   </div>;
 };
