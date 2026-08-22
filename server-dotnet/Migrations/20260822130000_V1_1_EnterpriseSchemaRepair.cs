@@ -158,7 +158,7 @@ AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_PurchaseLines_Purcha
 BEGIN
     CREATE INDEX [IX_PurchaseLines_PurchaseId] ON [dbo].[PurchaseLines] ([PurchaseId]);
 END;
-"@);
+");
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)
