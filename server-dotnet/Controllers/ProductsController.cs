@@ -19,16 +19,23 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         [FromQuery] string? category = null,
         [FromQuery] string? stockFilter = null,
         [FromQuery] bool includeInactive = false,
+        [FromQuery] string? activeFilter = null,
         CancellationToken cancellationToken = default)
     {
         var usesCatalogQuery = Request.Query.ContainsKey("page") || Request.Query.ContainsKey("pageSize") ||
                                !string.IsNullOrWhiteSpace(search) || !string.IsNullOrWhiteSpace(category) ||
-                               !string.IsNullOrWhiteSpace(stockFilter) || Request.Query.ContainsKey("includeInactive");
+                               !string.IsNullOrWhiteSpace(stockFilter) || Request.Query.ContainsKey("includeInactive") ||
+                               !string.IsNullOrWhiteSpace(activeFilter);
 
         if (!usesCatalogQuery)
         {
             var allProductsQuery = db.Products.AsNoTracking();
-            if (!includeInactive) allProductsQuery = allProductsQuery.Where(x => x.IsActive);
+            if (!includeInactive && !string.Equals(activeFilter, "ALL", StringComparison.OrdinalIgnoreCase))
+                allProductsQuery = allProductsQuery.Where(x => x.IsActive);
+            if (string.Equals(activeFilter, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+                allProductsQuery = allProductsQuery.Where(x => x.IsActive);
+            else if (string.Equals(activeFilter, "INACTIVE", StringComparison.OrdinalIgnoreCase))
+                allProductsQuery = allProductsQuery.Where(x => !x.IsActive);
             var allProducts = await allProductsQuery.OrderBy(x => x.Name).ToListAsync(cancellationToken);
             return Ok(allProducts.Select(ToDto));
         }
@@ -37,7 +44,12 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         pageSize = Math.Clamp(pageSize, 10, 100);
         var query = db.Products.AsNoTracking().AsQueryable();
 
-        if (!includeInactive)
+        var filter = activeFilter?.Trim().ToUpperInvariant();
+        if (filter == "ACTIVE")
+            query = query.Where(x => x.IsActive);
+        else if (filter == "INACTIVE")
+            query = query.Where(x => !x.IsActive);
+        else if (!includeInactive)
             query = query.Where(x => x.IsActive);
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -96,7 +108,7 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = product.Id }, ToDto(product));
     }
 
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, ProductRequest input, CancellationToken cancellationToken)
     {
