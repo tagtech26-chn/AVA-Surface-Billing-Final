@@ -23,7 +23,7 @@ export const EnterpriseManagementView: React.FC<Props> = ({ activeUser, currency
     try {
       setMessage('');
       const [p,c,i,co] = await Promise.all([
-        fetch('/api/products?page=1&pageSize=100',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Product API HTTP ${r.status}`))),
+        fetch('/api/products?page=1&pageSize=100&includeInactive=true&activeFilter=ALL',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Product API HTTP ${r.status}`))),
         fetch('/api/customers',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Customer API HTTP ${r.status}`))),
         fetch('/api/invoices/history',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Invoice API HTTP ${r.status}`))),
         fetch('/api/companies',{headers:authHeaders()}).then(r=>r.ok?r.json():Promise.reject(new Error(`Company API HTTP ${r.status}`)))
