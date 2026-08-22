@@ -66,6 +66,46 @@ const ASPNET_PROXY_PREFIXES = [
   "/api/enterprise"
 ];
 
+// Defense in depth: never allow a billing request through when any referenced
+// product is inactive in SQL Server, even if an older ASP.NET instance or a
+// stale browser catalogue would otherwise accept the item.
+app.post("/api/invoices", async (req, res, next) => {
+  try {
+    const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    const productIds = [...new Set(lines.map((line: any) => String(line?.productId || "").trim()).filter(Boolean))];
+    if (productIds.length === 0) return next();
+
+    const authorization = req.get("authorization");
+    for (const productId of productIds) {
+      const headers: Record<string, string> = {};
+      if (authorization) headers.authorization = authorization;
+      const productResponse = await fetch(`${DOTNET_API_URL}/api/products/${encodeURIComponent(productId)}`, {
+        method: "GET",
+        headers
+      });
+
+      if (productResponse.status === 404) {
+        return res.status(400).json({ error: `Product ${productId} is not available in the inventory master.` });
+      }
+      if (!productResponse.ok) {
+        const upstreamText = await productResponse.text();
+        console.error(`Inactive-product validation failed for ${productId}: HTTP ${productResponse.status} ${upstreamText}`);
+        return res.status(502).json({ error: "Unable to validate inventory status before billing." });
+      }
+
+      const product = await productResponse.json() as { id?: string; name?: string; isActive?: boolean };
+      if (product.isActive === false) {
+        return res.status(400).json({ error: `Product "${product.name || productId}" is deactivated and cannot be billed.` });
+      }
+    }
+
+    return next();
+  } catch (error) {
+    console.error("Inactive-product billing guard failed:", error);
+    return res.status(502).json({ error: "Unable to validate inventory status before billing." });
+  }
+});
+
 app.use(ASPNET_PROXY_PREFIXES, async (req, res, next) => {
   try {
     const targetUrl = `${DOTNET_API_URL}${req.originalUrl}`;
