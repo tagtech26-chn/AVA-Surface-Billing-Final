@@ -30,9 +30,7 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         if (!usesCatalogQuery)
         {
             var allProductsQuery = db.Products.AsNoTracking();
-            if (!includeInactive && !string.Equals(activeFilter, "ALL", StringComparison.OrdinalIgnoreCase))
-                allProductsQuery = allProductsQuery.Where(x => x.IsActive);
-            if (string.Equals(activeFilter, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(activeFilter, "ACTIVE", StringComparison.OrdinalIgnoreCase) || !includeInactive)
                 allProductsQuery = allProductsQuery.Where(x => x.IsActive);
             else if (string.Equals(activeFilter, "INACTIVE", StringComparison.OrdinalIgnoreCase))
                 allProductsQuery = allProductsQuery.Where(x => !x.IsActive);
@@ -45,12 +43,9 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         var query = db.Products.AsNoTracking().AsQueryable();
 
         var filter = activeFilter?.Trim().ToUpperInvariant();
-        if (filter == "ACTIVE")
-            query = query.Where(x => x.IsActive);
-        else if (filter == "INACTIVE")
-            query = query.Where(x => !x.IsActive);
-        else if (!includeInactive)
-            query = query.Where(x => x.IsActive);
+        if (filter == "ACTIVE") query = query.Where(x => x.IsActive);
+        else if (filter == "INACTIVE") query = query.Where(x => !x.IsActive);
+        else if (!includeInactive) query = query.Where(x => x.IsActive);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -58,8 +53,6 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
             query = query.Where(x => x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term)));
         }
 
-        // Category is not yet a normalized MSSQL Product column. Keep the query
-        // parameter for the UI contract without inventing a database field.
         _ = category;
 
         if (string.Equals(stockFilter, "LOW_STOCK", StringComparison.OrdinalIgnoreCase))
@@ -123,19 +116,16 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
 
     [Authorize(Roles = "ADMIN")]
     [HttpPut("sync")]
-    public async Task<ActionResult<IEnumerable<ProductDto>>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken)
+    public async Task<ActionResult<IEnumerable<ProductDto>>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken = default)
     {
         var items = input.ToList();
         var companyId = await ResolveCompanyId(null, cancellationToken);
         if (companyId is null) return BadRequest("No active company is configured.");
         var changedProducts = new List<Product>();
-
         foreach (var item in items.Where(x => !string.IsNullOrWhiteSpace(x.Sku) && !string.IsNullOrWhiteSpace(x.Name)))
         {
             Guid? requestedId = Guid.TryParse(item.Id, out var parsedId) ? parsedId : null;
-            var product = requestedId.HasValue
-                ? await db.Products.FirstOrDefaultAsync(x => x.Id == requestedId && x.CompanyId == companyId, cancellationToken)
-                : null;
+            var product = requestedId.HasValue ? await db.Products.FirstOrDefaultAsync(x => x.Id == requestedId && x.CompanyId == companyId, cancellationToken) : null;
             product ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == item.Sku, cancellationToken);
             if (product is null) { product = new Product { Id = requestedId ?? Guid.NewGuid(), CompanyId = companyId.Value }; db.Products.Add(product); }
             product.Sku = item.Sku.Trim(); product.Name = item.Name.Trim(); product.HsnCode = item.HsnCode; product.Unit = item.Unit ?? "PCS";
@@ -143,7 +133,6 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
             product.StockQuantity = item.Stock; product.ReorderLevel = item.ReorderLevel; product.IsActive = true;
             changedProducts.Add(product);
         }
-
         await db.SaveChangesAsync(cancellationToken);
         return Ok(changedProducts.Select(ToDto));
     }
