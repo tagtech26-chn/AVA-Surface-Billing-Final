@@ -4,6 +4,7 @@ import { Product, Customer, PromoRule, Invoice, Expense, UserProfile, BusinessSt
 import { Storage } from './lib/storage';
 import { hydrateInvoicesFromServer } from './lib/invoiceHydration';
 import { createAuditEntry, loadAuditLogs, saveAuditLog, purgeAuditLogs } from './lib/auditLogger';
+import { authHeaders } from './lib/utils';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
 import { ModernPosBillingView } from './components/ModernPosBillingView';
@@ -50,6 +51,21 @@ export default function App() {
     let cancelled = false;
     void hydrateInvoicesFromServer().then((hydrated) => {
       if (!cancelled && hydrated.length > 0) setInvoices(hydrated);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/promotions', { headers: authHeaders() }).then(async (response) => {
+      if (!response.ok) throw new Error(`Promotion API HTTP ${response.status}`);
+      return response.json() as Promise<Array<{ id: string; code: string; name: string; discountPercent: number; productCategory?: string | null; isActive: boolean; validFrom: string; validTo: string }>>;
+    }).then((rows) => {
+      if (cancelled) return;
+      setPromos(rows.map((row) => ({ id: row.id, code: row.code, title: row.name, description: row.name, discountType: 'PERCENTAGE', discountValue: Number(row.discountPercent || 0), minOrderValue: 0, maxDiscountAmount: undefined, validFrom: row.validFrom, validUntil: row.validTo, isActive: row.isActive !== false, autoApply: false, usageCount: 0, targetCategory: row.productCategory || undefined })));
+    }).catch((error) => {
+      console.error('Promotion master load failed:', error);
+      if (!cancelled) setPromos([]);
     });
     return () => { cancelled = true; };
   }, []);
