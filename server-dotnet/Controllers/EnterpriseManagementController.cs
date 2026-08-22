@@ -34,7 +34,6 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
         {
             invoice.Status = "CANCELLED";
             invoice.WorkflowStatus = "CANCELLED";
-            invoice.DeliveryStatusSafe();
             db.Set<InvoiceCancellation>().Add(new InvoiceCancellation
             {
                 InvoiceId = invoice.Id,
@@ -73,7 +72,7 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
             });
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return Ok(new { invoice.Id, invoice.Status, invoice.WorkflowStatus, cancellationId = db.Entry(invoice).Property(x => x.Id).CurrentValue });
+            return Ok(new { invoice.Id, invoice.Status, invoice.WorkflowStatus });
         }
         catch
         {
@@ -129,7 +128,6 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
         var allowed = new[] { "ADMIN", "MANAGER", "BRANCH_MANAGER", "CASHIER", "BILLING_USER", "ACCOUNTANT", "WAREHOUSE" };
         if (!allowed.Contains(role)) return BadRequest("Unsupported role.");
         if (await db.AppUsers.AnyAsync(x => x.UserName == request.UserName.Trim(), cancellationToken)) return Conflict("Username already exists.");
-        if (request.CompanyId.HasValue && !await db.Companies.AnyAsync(x => x.Id == request.CompanyId.Value && x.IsActive, cancellationToken)) return BadRequest("Selected company is not active or does not exist.");
         var user = new AppUser { CompanyId = request.CompanyId, UserName = request.UserName.Trim(), DisplayName = request.DisplayName.Trim(), Role = role, PasswordHash = PasswordHasher.Hash(request.Password), IsActive = true };
         db.AppUsers.Add(user);
         await db.SaveChangesAsync(cancellationToken);
@@ -142,14 +140,12 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
     {
         var user = await db.AppUsers.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (user is null) return NotFound();
-        if (string.IsNullOrWhiteSpace(request.DisplayName)) return BadRequest("Display name is required.");
         var role = request.Role.Trim().ToUpperInvariant();
         if (role is not ("ADMIN" or "MANAGER" or "BRANCH_MANAGER" or "CASHIER" or "BILLING_USER" or "ACCOUNTANT" or "WAREHOUSE")) return BadRequest("Unsupported role.");
-        if (request.CompanyId.HasValue && !await db.Companies.AnyAsync(x => x.Id == request.CompanyId.Value && x.IsActive, cancellationToken)) return BadRequest("Selected company is not active or does not exist.");
-        user.CompanyId = request.CompanyId;
         user.DisplayName = request.DisplayName.Trim();
         user.Role = role;
         user.IsActive = request.IsActive;
+        user.CompanyId = request.CompanyId;
         if (!string.IsNullOrWhiteSpace(request.Password)) user.PasswordHash = PasswordHasher.Hash(request.Password);
         await db.SaveChangesAsync(cancellationToken);
         return NoContent();
@@ -258,15 +254,7 @@ public sealed class EnterpriseManagementController(BillingDbContext db) : Contro
         var cancelled = await db.Invoices.AsNoTracking().CountAsync(x => x.Status == "CANCELLED" && x.InvoiceDate >= monthStart, cancellationToken);
         var quotations = await db.Invoices.AsNoTracking().CountAsync(x => x.InvoiceDate >= monthStart && x.WorkflowStatus != "CANCELLED", cancellationToken);
         var converted = sales.Count(x => x.InvoiceDate >= monthStart);
-        return Ok(new
-        {
-            todaySales = sales.Where(x => x.InvoiceDate >= today && x.InvoiceDate < tomorrow).Sum(x => x.GrandTotal),
-            monthSales = sales.Where(x => x.InvoiceDate >= monthStart && x.InvoiceDate < tomorrow).Sum(x => x.GrandTotal),
-            monthInvoices = sales.Count(x => x.InvoiceDate >= monthStart),
-            monthCancelled = cancelled,
-            quotationConversionPercent = quotations == 0 ? 0 : Math.Round(converted * 100m / quotations, 2),
-            topSalespersons = sales.Where(x => x.InvoiceDate >= monthStart).GroupBy(x => x.SalespersonName).Select(g => new { salesperson = g.Key, sales = g.Sum(x => x.GrandTotal) }).OrderByDescending(x => x.sales).Take(10).ToList()
-        });
+        return Ok(new { todaySales = sales.Where(x => x.InvoiceDate >= today && x.InvoiceDate < tomorrow).Sum(x => x.GrandTotal), monthSales = sales.Where(x => x.InvoiceDate >= monthStart && x.InvoiceDate < tomorrow).Sum(x => x.GrandTotal), monthInvoices = sales.Count(x => x.InvoiceDate >= monthStart), monthCancelled = cancelled, quotationConversionPercent = quotations == 0 ? 0 : Math.Round(converted * 100m / quotations, 2), topSalespersons = sales.Where(x => x.InvoiceDate >= monthStart).GroupBy(x => x.SalespersonName).Select(g => new { salesperson = g.Key, sales = g.Sum(x => x.GrandTotal) }).OrderByDescending(x => x.sales).Take(10).ToList() });
     }
 
     [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
