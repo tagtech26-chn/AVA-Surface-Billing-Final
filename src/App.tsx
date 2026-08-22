@@ -19,6 +19,7 @@ import { AuditLogView } from './components/AuditLogView';
 import { UserControlModal } from './components/UserControlModal';
 import { PrintableReceiptModal } from './components/PrintableReceiptModal';
 import { CashierDiscountRequestView } from './components/CashierDiscountRequestView';
+import { EnterpriseManagementView } from './components/EnterpriseManagementView';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('pos');
@@ -176,6 +177,7 @@ export default function App() {
       {activeTab === 'warehouse' && <InvoiceWorkflowView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} />}
       {activeTab === 'promos' && <PromosView promos={promos} onSavePromo={handleSavePromo} onTogglePromoActive={handleTogglePromoActive} currencySymbol={storeDetails.currencySymbol} />}
       {activeTab === 'invoices' && <InvoicesView invoices={invoices} onRecordPayment={handleRecordInvoicePayment} onProcessRefund={handleProcessRefund} onSelectInvoiceToPrint={(inv) => { if (inv.status === 'PAID') setPrintingInvoice(inv); }} currencySymbol={storeDetails.currencySymbol} />}
+      {activeTab === 'enterprise' && <EnterpriseManagementView activeUser={activeUser} currencySymbol={storeDetails.currencySymbol} />}
       {activeTab === 'eway' && <EWayInvoiceView invoices={invoices} storeDetails={storeDetails} onUpdateEWayDetails={handleUpdateEWayDetails} />}
       {activeTab === 'tally' && <TallyIntegrationView invoices={invoices} expenses={expenses} products={products} customers={customers} />}
       {activeTab === 'reports' && <FinancialDashboardView invoices={invoices} expenses={expenses} products={products} onAddExpense={handleAddExpense} currencySymbol={storeDetails.currencySymbol} />}
