@@ -121,7 +121,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         companyId: null,
         sku: editing.sku.trim(),
         name: editing.name.trim(),
-        hsnCode: editing.hsnCode?.trim() || null,
+        hsnCode: editing.hsnCode || null,
         unit: editing.unit || 'PCS',
         costPrice: Number(editing.costPrice) || 0,
         sellingPrice: Number(editing.sellingPrice) || 0,
@@ -157,7 +157,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
           id: p.id,
           sku: p.sku,
           name: p.name,
-          hsnCode: p.hsnCode?.trim() || null,
+          hsnCode: p.hsnCode || null,
           unit: p.unit,
           costPrice: p.costPrice,
           sellingPrice: p.sellingPrice,
@@ -196,9 +196,9 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Items in master</p><p className="text-2xl font-black text-white mt-1">{result.totalCount.toLocaleString()}</p></div>
-        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Current page</p><p className="text-2xl font-black text-indigo-300 mt-1">{result.items.length}</p></div>
-        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Low stock shown</p><p className="text-2xl font-black text-amber-400 mt-1">{lowStockOnPage}</p></div>
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Total Inventory Items</p><p className="text-2xl font-black text-white mt-1">{result.totalCount.toLocaleString()}</p><p className="text-[10px] text-slate-500 mt-1">Products in master</p></div>
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Items on Current Page</p><p className="text-2xl font-black text-indigo-300 mt-1">{result.items.length}</p></div>
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Low Stock Shown</p><p className="text-2xl font-black text-amber-400 mt-1">{lowStockOnPage}</p></div>
         <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4"><p className="text-[10px] text-slate-500 uppercase font-black">Page</p><p className="text-2xl font-black text-white mt-1">{result.page} <span className="text-sm text-slate-500">/ {result.totalPages || 1}</span></p></div>
       </div>
 
@@ -241,16 +241,16 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
           </table>
         </div>
         <div className="flex items-center justify-between px-4 py-3 border-t border-slate-800 bg-slate-950/40">
-          <span className="text-[11px] text-slate-500">Showing {result.totalCount === 0 ? 0 : ((result.page - 1) * result.pageSize) + 1}–{Math.min(result.page * result.pageSize, result.totalCount)} of {result.totalCount.toLocaleString()}</span>
+          <span className="text-[11px] text-slate-500">Showing {result.totalCount === 0 ? 0 : ((result.page - 1) * result.pageSize) + 1}–{Math.min(result.page * result.pageSize, result.totalCount)} of {result.totalCount.toLocaleString()} inventory items</span>
           <div className="flex gap-2"><button disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))} className="p-2 rounded-lg bg-slate-800 text-slate-300 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button><button disabled={page >= result.totalPages || loading} onClick={() => setPage((p) => p + 1)} className="p-2 rounded-lg bg-slate-800 text-slate-300 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button></div>
         </div>
       </div>
 
       {editing && <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"><div className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl"><div className="flex justify-between items-center pb-4 border-b border-slate-800"><div><p className="text-[10px] uppercase tracking-widest text-indigo-400 font-black">Stock Item Master</p><h2 className="text-xl font-black text-white">{result.items.some((p) => p.id === editing.id) ? 'Alter Item' : 'Create Item'}</h2></div><button onClick={() => setEditing(null)}><X className="w-5 h-5 text-slate-400" /></button></div><div className="grid grid-cols-2 gap-3 py-5 text-xs">
-        {([['name','Item Name'],['sku','SKU'],['hsnCode','HSN Code'],['unit','Unit']] as const).map(([field,label]) => <label key={field} className="text-slate-400">{label}<input value={String(editing[field] ?? '')} placeholder={label} onChange={(e) => setEditing({ ...editing, [field]: e.target.value })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>)}
+        {([['name','Item Name'],['sku','SKU'],['hsnCode','HSN Code'],['unit','Unit']] as const).map(([field,label]) => <label key={field} className="text-slate-400">{label}<input value={String(editing[field] || '')} onChange={(e) => setEditing({ ...editing, [field]: e.target.value })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>)}
         <label className="text-slate-400">Cost Price<input type="number" step="0.01" value={editing.costPrice} onChange={(e) => setEditing({ ...editing, costPrice: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
         <label className="text-slate-400">Selling Price<input type="number" step="0.01" value={editing.sellingPrice} onChange={(e) => setEditing({ ...editing, sellingPrice: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
-        <label className="text-slate-400">GST Rate<input type="number" min="0" max="100" step="0.01" value={editing.taxRate} onChange={(e) => setEditing({ ...editing, taxRate: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
+        <label className="text-slate-400">GST Rate (%)<input type="number" min="0" max="100" step="0.01" value={editing.taxRate} onChange={(e) => setEditing({ ...editing, taxRate: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
         <label className="text-slate-400">Opening / Current Stock<input type="number" value={editing.stock} onChange={(e) => setEditing({ ...editing, stock: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
         <label className="text-slate-400">Reorder Level<input type="number" value={editing.reorderLevel} onChange={(e) => setEditing({ ...editing, reorderLevel: Number(e.target.value) })} className="mt-1 w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white" /></label>
       </div><div className="flex justify-end gap-2"><button onClick={() => setEditing(null)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">Cancel</button><button disabled={saving || !editing.name.trim() || !editing.sku.trim()} onClick={saveSingle} className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black disabled:opacity-40">{saving ? 'Saving...' : 'Save Item'}</button></div></div></div>}
