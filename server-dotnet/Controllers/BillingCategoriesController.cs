@@ -87,22 +87,33 @@ public sealed class BillingCategoriesController(BillingDbContext db) : Controlle
     [HttpPost("prices")]
     public async Task<IActionResult> CreatePrice(CategoryPriceRequest request, CancellationToken ct)
     {
-        if (!await db.CustomerCategories.AnyAsync(x => x.Id == request.CategoryId && x.IsActive, ct))
-            return NotFound("Billing category not found.");
         if (!request.FixedPrice.HasValue && !request.DiscountPercent.HasValue)
             return BadRequest("Fixed price or discount percentage is required.");
-        if ((request.FixedPrice.HasValue && request.FixedPrice.Value < 0) ||
-            (request.DiscountPercent.HasValue && (request.DiscountPercent.Value < 0 || request.DiscountPercent.Value > 100)))
-            return BadRequest("Price or discount is invalid.");
+        if (request.FixedPrice.HasValue && request.FixedPrice.Value < 0)
+            return BadRequest("Fixed price cannot be negative.");
+        if (request.DiscountPercent.HasValue && (request.DiscountPercent.Value < 0 || request.DiscountPercent.Value > 100))
+            return BadRequest("Discount percentage must be between 0 and 100.");
         if (request.ValidTo.Date < request.ValidFrom.Date)
             return BadRequest("Valid-to date cannot be earlier than valid-from date.");
 
+        var category = await db.CustomerCategories
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == request.CategoryId && x.IsActive, ct);
+        if (category is null)
+            return NotFound("Billing category not found. Refresh the Billing Categories list and try again.");
+
+        if (request.ProductId.HasValue && !await db.Products.AsNoTracking().AnyAsync(x => x.Id == request.ProductId.Value, ct))
+            return NotFound("Product not found.");
+
         var row = new CategoryPriceRule
         {
-            CompanyId = request.CompanyId,
+            // Use the category's company when the UI does not explicitly provide one.
+            // This prevents a valid category price from failing because the frontend
+            // does not have to know the company context.
+            CompanyId = request.CompanyId ?? category.CompanyId,
             CategoryId = request.CategoryId,
             ProductId = request.ProductId,
-            ProductGroup = request.ProductGroup?.Trim(),
+            ProductGroup = string.IsNullOrWhiteSpace(request.ProductGroup) ? null : request.ProductGroup.Trim(),
             FixedPrice = request.FixedPrice,
             DiscountPercent = request.DiscountPercent,
             ValidFrom = request.ValidFrom.Date,
@@ -110,8 +121,20 @@ public sealed class BillingCategoriesController(BillingDbContext db) : Controlle
             Priority = request.Priority,
             IsActive = true
         };
-        db.CategoryPriceRules.Add(row);
-        await db.SaveChangesAsync(ct);
+
+        try
+        {
+            db.CategoryPriceRules.Add(row);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex)
+        {
+            return Problem(
+                title: "Unable to save category price",
+                detail: ex.InnerException?.Message ?? ex.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+
         return Ok(row);
     }
 
@@ -165,7 +188,6 @@ public sealed class BillingCategoriesController(BillingDbContext db) : Controlle
             source = "BILLING_CATEGORY";
         }
 
-        // CustomerPriceRule is intentionally NOT consulted here. v1.1 pricing is category-driven.
         return Ok(new
         {
             productId,
