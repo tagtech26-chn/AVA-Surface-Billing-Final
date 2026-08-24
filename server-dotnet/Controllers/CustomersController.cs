@@ -12,7 +12,40 @@ namespace AVASurface.Server.Controllers;
 public sealed class CustomersController(BillingDbContext db) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<CustomerDto>>> Get(CancellationToken cancellationToken) => Ok((await db.Customers.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(cancellationToken)).Select(ToDto));
+    public async Task<ActionResult<CustomerPageDto>> Get([FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery] string? search = null, [FromQuery] Guid? companyId = null, CancellationToken cancellationToken = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 10, 100);
+        var query = db.Customers.AsNoTracking().Where(x => x.IsActive);
+        if (companyId.HasValue) query = query.Where(x => x.CompanyId == companyId.Value);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(x => x.Name.Contains(term) || x.Code.Contains(term) || (x.Phone != null && x.Phone.Contains(term)) || (x.Gstin != null && x.Gstin.Contains(term)));
+        }
+        var totalCount = await query.CountAsync(cancellationToken);
+        var items = await query.OrderBy(x => x.Name).ThenBy(x => x.Code)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(x => new CustomerDto(x.Id, x.CompanyId, x.Code, x.Name, x.Phone, x.Email, x.Gstin, x.Address, x.BillingAddress, x.ShippingAddress, x.City, x.State, x.StateCode, x.CustomerType, x.IsActive))
+            .ToListAsync(cancellationToken);
+        return Ok(new CustomerPageDto(items, page, pageSize, totalCount, (int)Math.Ceiling(totalCount / (double)pageSize)));
+    }
+
+    [HttpGet("search")]
+    public async Task<ActionResult<IEnumerable<CustomerSearchDto>>> Search([FromQuery] string q = "", [FromQuery] int limit = 20, [FromQuery] Guid? companyId = null, CancellationToken cancellationToken = default)
+    {
+        limit = Math.Clamp(limit, 1, 50);
+        var term = q.Trim();
+        if (term.Length < 2) return Ok(Array.Empty<CustomerSearchDto>());
+        var query = db.Customers.AsNoTracking().Where(x => x.IsActive);
+        if (companyId.HasValue) query = query.Where(x => x.CompanyId == companyId.Value);
+        var items = await query.Where(x => x.Name.Contains(term) || x.Code.Contains(term) || (x.Phone != null && x.Phone.Contains(term)) || (x.Gstin != null && x.Gstin.Contains(term)))
+            .OrderBy(x => x.Name).ThenBy(x => x.Code).Take(limit)
+            .Select(x => new CustomerSearchDto(x.Id, x.CompanyId, x.Code, x.Name, x.Phone, x.Gstin, x.CustomerType))
+            .ToListAsync(cancellationToken);
+        return Ok(items);
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<CustomerDto>> GetById(Guid id, CancellationToken cancellationToken) { var customer = await db.Customers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken); return customer is null ? NotFound() : Ok(ToDto(customer)); }
 
@@ -46,4 +79,6 @@ public sealed class CustomersController(BillingDbContext db) : ControllerBase
     private static CustomerDto ToDto(Customer x) => new(x.Id, x.CompanyId, x.Code, x.Name, x.Phone, x.Email, x.Gstin, x.Address, x.BillingAddress, x.ShippingAddress, x.City, x.State, x.StateCode, x.CustomerType, x.IsActive);
     public sealed record CustomerRequest(Guid CompanyId, string Code, string Name, string? Phone, string? Email, string? Gstin, string? Address, string? BillingAddress, string? ShippingAddress, string? City, string? State, string? StateCode, string CustomerType = "B2C", bool IsActive = true);
     public sealed record CustomerDto(Guid Id, Guid CompanyId, string Code, string Name, string? Phone, string? Email, string? Gstin, string? Address, string? BillingAddress, string? ShippingAddress, string? City, string? State, string? StateCode, string CustomerType, bool IsActive);
+    public sealed record CustomerSearchDto(Guid Id, Guid CompanyId, string Code, string Name, string? Phone, string? Gstin, string CustomerType);
+    public sealed record CustomerPageDto(IReadOnlyCollection<CustomerDto> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 }
