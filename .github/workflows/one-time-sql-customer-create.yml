@@ -1,0 +1,40 @@
+name: One-time SQL-backed POS customer creation patch
+
+on:
+  push:
+    branches:
+      - feature/v1.1.0-enterprise-management
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v1.1.0-enterprise-management
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Apply SQL customer creation patch
+        run: python tools/apply-sql-customer-create.py
+      - name: Verify frontend
+        run: npm run lint && npm run build
+      - name: Verify backend
+        run: dotnet build server-dotnet/AVASurface.Server.csproj
+      - name: Commit verified patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/ModernPosBillingView.tsx
+          git rm tools/apply-sql-customer-create.py .github/workflows/one-time-sql-customer-create.yml
+          git commit -m "fix: create POS customers in SQL before category mapping"
+          git push origin HEAD:feature/v1.1.0-enterprise-management
