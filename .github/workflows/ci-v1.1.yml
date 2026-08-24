@@ -29,3 +29,5 @@ jobs:
         run: npm run build
       - name: Backend build
         run: dotnet build server-dotnet/AVASurface.Server.csproj --configuration Release --no-restore
+      - name: Enterprise pricing tests
+        run: dotnet test server-dotnet.Tests/AVASurface.Server.Tests.csproj --configuration Release --no-restore
