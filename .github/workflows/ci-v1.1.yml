@@ -27,6 +27,10 @@ jobs:
         run: npm run lint
       - name: Frontend production build
         run: npm run build
+      - name: Restore .NET projects
+        run: |
+          dotnet restore server-dotnet/AVASurface.Server.csproj
+          dotnet restore server-dotnet.Tests/AVASurface.Server.Tests.csproj
       - name: Backend build
         run: dotnet build server-dotnet/AVASurface.Server.csproj --configuration Release --no-restore
       - name: Enterprise pricing tests
