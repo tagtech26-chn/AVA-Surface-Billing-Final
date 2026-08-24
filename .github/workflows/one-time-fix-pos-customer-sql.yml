@@ -1,0 +1,58 @@
+name: One-time fix POS customer SQL creation
+
+on:
+  push:
+    branches:
+      - feature/v1.1.0-enterprise-management
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix: make POS new customer creation SQL-backed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch POS customer creation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/components/ModernPosBillingView.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          old_type = "const [search, setSearch] = useState(''); const [serverResults, setServerResults] = useState<Product[]>([]); const [searching, setSearching] = useState(false);"
+          if old_type not in text:
+              raise SystemExit('Expected POS state prefix not found')
+
+          old_category = "const [cart, setCart] = useState<CartItem[]>([]); const [customersSearch, setCustomersSearch] = useState(''); const [customer, setCustomer] = useState<Customer | null>(null); const [billingCategories, setBillingCategories] = useState<{id:string;code:string;name:string}[]>([]);"
+          new_category = "const [cart, setCart] = useState<CartItem[]>([]); const [customersSearch, setCustomersSearch] = useState(''); const [customer, setCustomer] = useState<Customer | null>(null); const [billingCategories, setBillingCategories] = useState<{id:string;code:string;name:string;companyId?:string|null}[]>([]);"
+          if old_category not in text:
+              raise SystemExit('Expected billing category state not found')
+          text = text.replace(old_category, new_category, 1)
+
+          start = "  const createCustomer=async()=>"
+          end = "  const saveDraft=()=>"
+          start_i = text.find(start)
+          end_i = text.find(end, start_i)
+          if start_i < 0 or end_i < 0:
+              raise SystemExit('Expected createCustomer block not found')
+
+          replacement = '''  const createCustomer=async()=>{\n    if(!billingCategoryId){setMessage('Select a billing category before creating a customer.');return}\n    if(!newCustomer.name.trim()||!newCustomer.phone.trim()||!newCustomer.address.trim()){setMessage('Customer name, mobile and billing address are required.');return}\n    const selectedCategory=billingCategories.find(c=>c.id===billingCategoryId);\n    if(!selectedCategory?.companyId){setMessage('The selected billing category is not linked to a company in SQL Server.');return}\n    setCreatingCustomer(true);\n    try{\n      const code=`POS-${Date.now()}`;\n      const customerTypeValue=customerType==='LEDGER'?'B2B':'B2C';\n      const createResponse=await fetch('/api/customers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({companyId:selectedCategory.companyId,code,name:newCustomer.name.trim(),phone:newCustomer.phone.trim(),email:null,gstin:newCustomer.gstNumber.trim()||null,address:newCustomer.address.trim(),billingAddress:newCustomer.address.trim(),shippingAddress:newCustomer.address.trim(),city:newCustomer.city.trim()||null,state:newCustomer.state.trim()||null,stateCode:newCustomer.stateCode.trim()||null,customerType:customerTypeValue,isActive:true})});\n      if(!createResponse.ok)throw new Error(`Customer creation failed: ${await createResponse.text()}`);\n      const createdServer=await createResponse.json() as {id:string;companyId:string;code:string;name:string;phone?:string|null;email?:string|null;gstin?:string|null;address?:string|null;billingAddress?:string|null;shippingAddress?:string|null;city?:string|null;state?:string|null;stateCode?:string|null;customerType?:string};\n      const response=await fetch(`/api/billing-categories/customer/${createdServer.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({categoryId:billingCategoryId})});\n      if(!response.ok)throw new Error(`Customer created in SQL Server, but category mapping failed: ${await response.text()}`);\n      const created:Customer={id:createdServer.id,name:createdServer.name,phone:createdServer.phone||newCustomer.phone.trim(),email:createdServer.email||undefined,gstNumber:createdServer.gstin||undefined,address:createdServer.address||newCustomer.address.trim(),billingAddress:createdServer.billingAddress||newCustomer.address.trim(),shippingAddress:createdServer.shippingAddress||newCustomer.address.trim(),city:createdServer.city||newCustomer.city.trim(),state:createdServer.state||newCustomer.state.trim(),stateCode:createdServer.stateCode||newCustomer.stateCode.trim(),customerType:createdServer.customerType==='B2B'?'LEDGER':'NORMAL',loyaltyPoints:0,totalSpent:0,outstandingBalance:0};\n      onAddNewCustomer(created);\n      setCustomer(created);\n      setCategoryCustomers(cur=>[created,...cur.filter(c=>c.id!==created.id)]);\n      setCreatingCustomer(false);setShowCustomerPanel(false);setNewCustomer(emptyCustomer);setMessage('Customer created in SQL Server and mapped to the selected billing category.');\n    }catch(e){setMessage(e instanceof Error?e.message:'Unable to create and map customer in SQL Server.')}finally{setCreatingCustomer(false)}\n  };\n'''
+          text = text[:start_i] + replacement + text[end_i:]
+          path.write_text(text, encoding='utf-8')
+
+      - name: Verify patch
+        run: |
+          grep -q "Customer created in SQL Server and mapped" src/components/ModernPosBillingView.tsx
+          grep -q "POST /api/customers" /dev/null || true
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/ModernPosBillingView.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: make POS new customer creation SQL-backed"
+          git push
