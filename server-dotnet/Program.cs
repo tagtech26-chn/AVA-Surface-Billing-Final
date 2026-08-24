@@ -116,13 +116,21 @@ app.MapGet("/api/health", async (BillingDbContext db) =>
     return Results.Ok(new
     {
         status = canConnect ? "ok" : "database_unavailable",
-        database = "MSSQL Express",
+        database = db.Database.GetDbConnection().Database,
         timestamp = DateTime.UtcNow
     });
 });
 
 using (var scope = app.Services.CreateScope())
 {
+    var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();
+
+    // Development convenience only: bring the local SQL schema up to the current v1.1
+    // migration before the UI starts. Production deployments should apply migrations
+    // explicitly and never auto-migrate business data.
+    if (app.Environment.IsDevelopment())
+        await db.Database.MigrateAsync();
+
     var partitionService = scope.ServiceProvider.GetRequiredService<MonthlyInvoicePartitionService>();
     await partitionService.EnsureCurrentMonthAsync();
 
