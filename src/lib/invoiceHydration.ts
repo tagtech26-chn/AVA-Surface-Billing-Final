@@ -32,10 +32,33 @@ function mapCustomer(c?: ServerInvoice['customer']): Customer | undefined { if (
 function mapLine(l: NonNullable<ServerInvoice['lines']>[number]): CartItem { const p=l.product; const product:Product={id:l.productId,sku:p?.sku||l.productId,barcode:p?.sku||l.productId,name:p?.name||'Item',category:'General',costPrice:0,sellingPrice:number(l.unitPrice),stock:number(p?.stock),reorderLevel:number(p?.reorderLevel),taxRate:number(p?.gstRate),unit:p?.unit||'PCS',hsnCode:p?.hsnCode,updatedAt:new Date().toISOString()}; return {product,quantity:number(l.quantity),inputQuantity:number(l.quantity),selectedUnit:undefined,discountAmount:number(l.discountAmount),discountPercent:number(l.discountPercent),finalUnitPrice:number(l.unitPrice),totalPrice:number(l.lineTotal)}; }
 function mapInvoice(s:ServerInvoice):Invoice { const invoiceDate=asUtcIso(s.invoiceDate)||new Date().toISOString(); const confirmedAt=asUtcIso(s.paymentConfirmedAtUtc); const warehouseLoadedAt=asUtcIso(s.warehouseLoadedAtUtc); const deliveredAt=asUtcIso(s.deliveredAtUtc); const payments=(s.payments||[]).map(p=>({id:p.id,amount:number(p.amount),method:(p.method||s.paymentMethodConfirmed||s.paymentMethodRequested||'CASH') as PaymentMethod,referenceNumber:p.reference,date:asUtcIso(p.paymentDateUtc)||confirmedAt||invoiceDate})); const amountPaid=payments.reduce((x,p)=>x+p.amount,0); const status: Invoice['status'] = s.status==='CANCELLED'||s.workflowStatus==='CANCELLED'?'CANCELLED':s.status==='PAID'||s.workflowStatus==='PAYMENT_CONFIRMED'||s.workflowStatus==='COMPLETED'?'PAID':amountPaid>0?'PARTIAL':'UNPAID'; const deliveryStatus=s.workflowStatus==='COMPLETED'?'DELIVERED':s.workflowStatus==='CANCELLED'?'CANCELLED':'PENDING_DISPATCH'; return {id:s.id,invoiceNumber:s.invoiceNumber?.trim()||s.quotationNumber?.trim()||'',quotationNumber:s.quotationNumber?.trim()||undefined,date:invoiceDate,customer:mapCustomer(s.customer),cashierName:'Billing',cashierRole:'BILLING_USER',salespersonName:s.salespersonName||s.salesperson?.name,salespersonMobile:s.salespersonMobile||s.salesperson?.mobile,items:(s.lines||[]).map(mapLine),subtotal:number(s.subTotal??s.subtotal),itemDiscountsTotal:number(s.discountAmount),promoDiscountAmount:number(s.promoDiscountAmount),branchManagerDiscountPercent:number(s.branchManagerDiscountPercent),branchManagerDiscountAmount:number(s.branchManagerDiscountAmount),branchManagerRemarks:s.branchManagerRemarks,manualDiscountAmount:number(s.branchManagerDiscountAmount),taxTotal:number(s.taxableAmount?number(s.cgstAmount)+number(s.sgstAmount)+number(s.igstAmount):s.taxAmount),cgstAmount:number(s.cgstAmount),sgstAmount:number(s.sgstAmount),igstAmount:number(s.igstAmount),roundOffAmount:number(s.roundOffAmount),grandTotal:number(s.grandTotal),amountPaid,changeGiven:0,status,paymentMethod:(s.paymentMethodConfirmed||s.paymentMethodRequested||'CASH') as PaymentMethod,paymentsHistory:payments,deliveryStatus,workflowStatus:s.workflowStatus,creditNoteAmount:number(s.creditNoteAmount),creditNoteReason:s.creditNoteReason,paymentConfirmedAtUtc:confirmedAt,paymentMethodConfirmed:s.paymentMethodConfirmed as PaymentMethod|undefined,paymentSpecificReference:s.paymentSpecificReference,vehicleNumber:s.vehicleNumber||s.warehouseVehicleNumber,warehouseLoadedBy:s.warehouseLoadedBy,warehouseVerifiedBy:s.warehouseVerifiedBy,warehouseLoadedAtUtc:warehouseLoadedAt,warehouseRemarks:s.warehouseRemarks,deliveredAtUtc:deliveredAt,deliveredByName:s.deliveredByName}; }
 
-export async function hydrateInvoicesFromServer(): Promise<Invoice[]> {
-  const response=await fetch('/api/invoices/history');
-  if(!response.ok) throw new Error(`Invoice API HTTP ${response.status}`);
-  const invoices=normalize(await response.json() as InvoiceApiResponse).map(mapInvoice).sort((a,b)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0));
-  setInvoicesFromServer(invoices);
-  return invoices;
+// Prevent duplicate invoice-history requests from startup + screen mounting + polling.
+// This is a transitional cache until the history endpoint is fully paginated.
+let invoiceCache: Invoice[] | null = null;
+let invoiceCacheAt = 0;
+let invoiceRequest: Promise<Invoice[]> | null = null;
+const CACHE_TTL_MS = 30_000;
+
+export async function hydrateInvoicesFromServer(force = false): Promise<Invoice[]> {
+  const now = Date.now();
+  if (!force && invoiceCache && now - invoiceCacheAt < CACHE_TTL_MS) return invoiceCache;
+  if (!force && invoiceRequest) return invoiceRequest;
+
+  invoiceRequest = (async () => {
+    const response=await fetch('/api/invoices/history');
+    if(!response.ok) throw new Error(`Invoice API HTTP ${response.status}`);
+    const invoices=normalize(await response.json() as InvoiceApiResponse).map(mapInvoice).sort((a,b)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0));
+    invoiceCache=invoices;
+    invoiceCacheAt=Date.now();
+    setInvoicesFromServer(invoices);
+    return invoices;
+  })();
+
+  try { return await invoiceRequest; }
+  finally { invoiceRequest = null; }
+}
+
+export function invalidateInvoiceCache(): void {
+  invoiceCache = null;
+  invoiceCacheAt = 0;
 }
