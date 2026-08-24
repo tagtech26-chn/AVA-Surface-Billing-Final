@@ -2,8 +2,7 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { LoginView } from './components/LoginView';
-import { Storage, hydrateProductsFromServer, hydrateDraftsFromServer, setCustomersFromServer, setPromosFromServer } from './lib/storage';
-import { hydrateInvoicesFromServer } from './lib/invoiceHydration';
+import { Storage, hydrateProductsFromServer, setCustomersFromServer, setPromosFromServer } from './lib/storage';
 import { UserProfile, Customer, PromoRule } from './types';
 import './index.css';
 import './modern-pos.css';
@@ -74,12 +73,12 @@ function AuthenticatedApp() {
     (async()=>{
       try {
         setStartupError('');
+        // Keep startup focused on master data required for the POS. Invoice history
+        // and held bills are loaded by their screens instead of blocking login.
         await Promise.all([
           hydrateProductsFromServer(),
-          hydrateInvoicesFromServer(),
           hydrateCustomersFromServer(),
-          hydratePromosFromServer(),
-          hydrateDraftsFromServer()
+          hydratePromosFromServer()
         ]);
       }
       catch(error) { console.error('Authoritative DB hydration failed:', error); if(active) setStartupError(error instanceof Error ? error.message : 'Unable to load business data from the database.'); }
@@ -89,7 +88,7 @@ function AuthenticatedApp() {
   },[user]);
 
   if (!user) return <LoginView onLogin={(profile) => { Storage.saveUsers([profile]); Storage.saveActiveUserId(profile.id); setHydrating(true); setUser(profile); }} />;
-  if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading SQL Server data...</div>;
+  if (hydrating) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading SQL Server master data...</div>;
   if (startupError) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6"><div className="max-w-xl w-full rounded-2xl border border-red-500/30 bg-slate-900 p-6"><h1 className="text-lg font-black text-red-300">Database data could not be loaded</h1><p className="text-sm text-slate-300 mt-3">{startupError}</p><button onClick={()=>window.location.reload()} className="mt-5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold">Retry</button></div></div>;
 
   Storage.saveUsers([user]);
