@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:production": "powershell -NoProfile -ExecutionPolicy Bypass -File ./build-production.ps1",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
   },
@@ -31,7 +30,6 @@
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.0",
-    "tsx": "^4.21.0",
     "typescript": "~5.8.2"
   }
 }
