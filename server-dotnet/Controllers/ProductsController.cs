@@ -26,7 +26,6 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
                                !string.IsNullOrWhiteSpace(search) || !string.IsNullOrWhiteSpace(category) ||
                                !string.IsNullOrWhiteSpace(stockFilter) || Request.Query.ContainsKey("includeInactive") ||
                                !string.IsNullOrWhiteSpace(activeFilter);
-
         if (!usesCatalogQuery)
         {
             var allProductsQuery = db.Products.AsNoTracking();
@@ -37,33 +36,22 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
             var allProducts = await allProductsQuery.OrderBy(x => x.Name).ToListAsync(cancellationToken);
             return Ok(allProducts.Select(ToDto));
         }
-
-        page = Math.Max(1, page);
-        pageSize = Math.Clamp(pageSize, 10, 100);
+        page = Math.Max(1, page); pageSize = Math.Clamp(pageSize, 10, 100);
         var query = db.Products.AsNoTracking().AsQueryable();
-
         var filter = activeFilter?.Trim().ToUpperInvariant();
         if (filter == "ACTIVE") query = query.Where(x => x.IsActive);
         else if (filter == "INACTIVE") query = query.Where(x => !x.IsActive);
         else if (!includeInactive) query = query.Where(x => x.IsActive);
-
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
             query = query.Where(x => x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term)));
         }
-
         _ = category;
-
-        if (string.Equals(stockFilter, "LOW_STOCK", StringComparison.OrdinalIgnoreCase))
-            query = query.Where(x => x.StockQuantity <= x.ReorderLevel);
-        else if (string.Equals(stockFilter, "OUT_OF_STOCK", StringComparison.OrdinalIgnoreCase))
-            query = query.Where(x => x.StockQuantity <= 0);
-
+        if (string.Equals(stockFilter, "LOW_STOCK", StringComparison.OrdinalIgnoreCase)) query = query.Where(x => x.StockQuantity <= x.ReorderLevel);
+        else if (string.Equals(stockFilter, "OUT_OF_STOCK", StringComparison.OrdinalIgnoreCase)) query = query.Where(x => x.StockQuantity <= 0);
         var totalCount = await query.CountAsync(cancellationToken);
-        var items = await query.OrderBy(x => x.Name).ThenBy(x => x.Sku)
-            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(cancellationToken);
-
+        var items = await query.OrderBy(x => x.Name).ThenBy(x => x.Sku).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(cancellationToken);
         return Ok(new ProductPageDto(items.Select(ToDto).ToArray(), page, pageSize, totalCount, (int)Math.Ceiling(totalCount / (double)pageSize)));
     }
 
@@ -71,10 +59,8 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     public async Task<ActionResult<IEnumerable<ProductDto>>> Search([FromQuery] string q, [FromQuery] int limit = 10, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(q)) return Ok(Array.Empty<ProductDto>());
-        limit = Math.Clamp(limit, 1, 25);
-        var term = q.Trim();
-        var products = await db.Products.AsNoTracking()
-            .Where(x => x.IsActive && (x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term))))
+        limit = Math.Clamp(limit, 1, 25); var term = q.Trim();
+        var products = await db.Products.AsNoTracking().Where(x => x.IsActive && (x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term))))
             .OrderBy(x => x.Name.StartsWith(term) ? 0 : 1).ThenBy(x => x.Name).Take(limit).ToListAsync(cancellationToken);
         return Ok(products.Select(ToDto));
     }
@@ -86,18 +72,15 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         return product is null ? NotFound() : Ok(ToDto(product));
     }
 
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
     [HttpPost]
     public async Task<ActionResult<ProductDto>> Create(ProductRequest input, CancellationToken cancellationToken)
     {
         var companyId = await ResolveCompanyId(input.CompanyId, cancellationToken);
-        if (companyId is null || string.IsNullOrWhiteSpace(input.Sku) || string.IsNullOrWhiteSpace(input.Name))
-            return BadRequest("A company, SKU and product name are required.");
-        if (await db.Products.AnyAsync(x => x.CompanyId == companyId && x.Sku == input.Sku, cancellationToken))
-            return Conflict("A product with this SKU already exists for the company.");
-        var product = FromRequest(input, companyId.Value);
-        db.Products.Add(product);
-        await db.SaveChangesAsync(cancellationToken);
+        if (companyId is null || string.IsNullOrWhiteSpace(input.Sku) || string.IsNullOrWhiteSpace(input.Name)) return BadRequest("A company, SKU and product name are required.");
+        var sku = input.Sku.Trim();
+        if (await db.Products.AnyAsync(x => x.CompanyId == companyId && x.Sku == sku, cancellationToken)) return Conflict("A product with this SKU already exists for the company.");
+        var product = FromRequest(input, companyId.Value); db.Products.Add(product); await db.SaveChangesAsync(cancellationToken);
         return CreatedAtAction(nameof(GetById), new { id = product.Id }, ToDto(product));
     }
 
@@ -107,19 +90,17 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     {
         var product = await db.Products.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (product is null) return NotFound();
-        product.Sku = input.Sku.Trim(); product.Name = input.Name.Trim(); product.HsnCode = input.HsnCode;
-        product.Unit = input.Unit ?? "PCS"; product.CostPrice = input.CostPrice; product.SellingPrice = input.SellingPrice;
-        product.GstRate = input.GstRate; product.StockQuantity = input.Stock; product.ReorderLevel = input.ReorderLevel; product.IsActive = input.IsActive;
-        await db.SaveChangesAsync(cancellationToken);
-        return NoContent();
+        if (string.IsNullOrWhiteSpace(input.Sku) || string.IsNullOrWhiteSpace(input.Name)) return BadRequest("SKU and product name are required.");
+        product.Sku = input.Sku.Trim(); product.Name = input.Name.Trim(); product.HsnCode = input.HsnCode; product.Unit = input.Unit ?? "PCS";
+        product.CostPrice = input.CostPrice; product.SellingPrice = input.SellingPrice; product.GstRate = input.GstRate; product.StockQuantity = input.Stock; product.ReorderLevel = input.ReorderLevel; product.IsActive = input.IsActive; product.UpdatedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken); return Ok(ToDto(product));
     }
 
     [Authorize(Roles = "ADMIN")]
     [HttpPut("sync")]
     public async Task<ActionResult<IEnumerable<ProductDto>>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken = default)
     {
-        var items = input.ToList();
-        var companyId = await ResolveCompanyId(null, cancellationToken);
+        var items = input.ToList(); var companyId = await ResolveCompanyId(null, cancellationToken);
         if (companyId is null) return BadRequest("No active company is configured.");
         var changedProducts = new List<Product>();
         foreach (var item in items.Where(x => !string.IsNullOrWhiteSpace(x.Sku) && !string.IsNullOrWhiteSpace(x.Name)))
@@ -128,35 +109,21 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
             var product = requestedId.HasValue ? await db.Products.FirstOrDefaultAsync(x => x.Id == requestedId && x.CompanyId == companyId, cancellationToken) : null;
             product ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == item.Sku, cancellationToken);
             if (product is null) { product = new Product { Id = requestedId ?? Guid.NewGuid(), CompanyId = companyId.Value }; db.Products.Add(product); }
-            product.Sku = item.Sku.Trim(); product.Name = item.Name.Trim(); product.HsnCode = item.HsnCode; product.Unit = item.Unit ?? "PCS";
-            product.CostPrice = item.CostPrice; product.SellingPrice = item.SellingPrice; product.GstRate = item.TaxRate;
-            product.StockQuantity = item.Stock; product.ReorderLevel = item.ReorderLevel; product.IsActive = true;
-            changedProducts.Add(product);
+            product.Sku = item.Sku.Trim(); product.Name = item.Name.Trim(); product.HsnCode = item.HsnCode; product.Unit = item.Unit ?? "PCS"; product.CostPrice = item.CostPrice; product.SellingPrice = item.SellingPrice; product.GstRate = item.TaxRate; product.StockQuantity = item.Stock; product.ReorderLevel = item.ReorderLevel; changedProducts.Add(product);
         }
-        await db.SaveChangesAsync(cancellationToken);
-        return Ok(changedProducts.Select(ToDto));
+        await db.SaveChangesAsync(cancellationToken); return Ok(changedProducts.Select(ToDto));
     }
 
     private async Task<Guid?> ResolveCompanyId(Guid? requestedCompanyId, CancellationToken cancellationToken)
     {
-        if (requestedCompanyId.HasValue && requestedCompanyId.Value != Guid.Empty)
-            return await db.Companies.AnyAsync(x => x.Id == requestedCompanyId.Value, cancellationToken) ? requestedCompanyId : null;
+        if (requestedCompanyId.HasValue && requestedCompanyId.Value != Guid.Empty) return await db.Companies.AnyAsync(x => x.Id == requestedCompanyId.Value, cancellationToken) ? requestedCompanyId : null;
         var existing = await db.Companies.OrderBy(x => x.CreatedAtUtc).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(cancellationToken);
         if (existing.HasValue) return existing;
-        var company = new Company { Code = "DEFAULT", LegalName = "AVASurface Billing", IsActive = true };
-        db.Companies.Add(company); await db.SaveChangesAsync(cancellationToken); return company.Id;
+        var company = new Company { Code = "DEFAULT", LegalName = "AVASurface Billing", IsActive = true }; db.Companies.Add(company); await db.SaveChangesAsync(cancellationToken); return company.Id;
     }
 
-    private static Product FromRequest(ProductRequest input, Guid companyId) => new()
-    {
-        CompanyId = companyId, Sku = input.Sku.Trim(), Name = input.Name.Trim(), HsnCode = input.HsnCode,
-        Unit = input.Unit ?? "PCS", CostPrice = input.CostPrice, SellingPrice = input.SellingPrice,
-        GstRate = input.GstRate, StockQuantity = input.Stock, ReorderLevel = input.ReorderLevel, IsActive = input.IsActive
-    };
-
-    private static ProductDto ToDto(Product product) => new(product.Id, product.Sku, product.Name, product.HsnCode, product.Unit,
-        product.CostPrice, product.SellingPrice, product.StockQuantity, product.ReorderLevel, product.GstRate, product.IsActive);
-
+    private static Product FromRequest(ProductRequest input, Guid companyId) => new() { CompanyId = companyId, Sku = input.Sku.Trim(), Name = input.Name.Trim(), HsnCode = input.HsnCode, Unit = input.Unit ?? "PCS", CostPrice = input.CostPrice, SellingPrice = input.SellingPrice, GstRate = input.GstRate, StockQuantity = input.Stock, ReorderLevel = input.ReorderLevel, IsActive = input.IsActive };
+    private static ProductDto ToDto(Product product) => new(product.Id, product.Sku, product.Name, product.HsnCode, product.Unit, product.CostPrice, product.SellingPrice, product.StockQuantity, product.ReorderLevel, product.GstRate, product.IsActive);
     public sealed record ProductPageDto(IReadOnlyCollection<ProductDto> Items, int Page, int PageSize, int TotalCount, int TotalPages);
     public sealed record ProductRequest(Guid? CompanyId, string Sku, string Name, string? HsnCode, string? Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal GstRate, bool IsActive = true);
     public sealed record ProductSyncItem(string Id, string Sku, string Name, string? HsnCode, string? Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal TaxRate);
