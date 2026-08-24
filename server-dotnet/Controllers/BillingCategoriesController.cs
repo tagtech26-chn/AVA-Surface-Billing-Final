@@ -57,7 +57,10 @@ public sealed class BillingCategoriesController(BillingDbContext db) : Controlle
             .ToListAsync(ct));
     }
 
-    [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
+    // Billing users are allowed to create a customer in the POS and immediately
+    // assign that customer to the category selected for the current bill.
+    // Management roles retain the same capability for administration screens.
+    [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER,BILLING_USER")]
     [HttpPut("customer/{customerId:guid}")]
     public async Task<IActionResult> AssignCustomer(Guid customerId, AssignBillingCategoryRequest request, CancellationToken ct)
     {
