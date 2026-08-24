@@ -1,0 +1,51 @@
+name: One-time Modern POS syntax repair
+
+on:
+  push:
+    branches:
+      - feature/v1.1.0-enterprise-management
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature/v1.1.0-enterprise-management
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Repair missing JSX brace
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/components/ModernPosBillingView.tsx')
+          s = p.read_text(encoding='utf-8')
+          bad = "</button></div>{search.trim().length>=2&&<div"
+          good = "</button>}</div>{search.trim().length>=2&&<div"
+          if bad not in s:
+              raise SystemExit('Expected malformed JSX pattern was not found.')
+          p.write_text(s.replace(bad, good, 1), encoding='utf-8')
+
+      - name: Validate TypeScript
+        run: |
+          npm ci
+          npm run lint
+
+      - name: Commit repair and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/ModernPosBillingView.tsx
+          git rm .github/workflows/one-time-fix-modern-pos-syntax.yml
+          git commit -m "fix: close Modern POS search JSX expression"
+          git push origin HEAD:feature/v1.1.0-enterprise-management
