@@ -12,3 +12,21 @@
 img[src*="images.unsplash.com"] {
   display: none;
 }
+
+/*
+ * Modern POS item-entry row: keep the desktop entry controls on one line.
+ * The component has an inline fallback stylesheet; these !important rules
+ * make the layout deterministic even when the effective viewport is reduced
+ * by browser zoom or an application shell/sidebar.
+ */
+@media (min-width: 560px) {
+  .pos-item-entry-grid {
+    grid-template-columns: minmax(0, 6fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(150px, 2fr) 80px !important;
+  }
+}
+
+@media (max-width: 559px) {
+  .pos-item-entry-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
