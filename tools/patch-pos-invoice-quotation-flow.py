@@ -22,6 +22,13 @@ new = "if(!persisted){setMessage('Bill was not saved. Please correct the highlig
 if old not in modern:
     raise SystemExit('PATCH_MISSING: Modern POS success message')
 modern = modern.replace(old, new, 1)
-MODERN.write_text(modern, encoding='utf-8')
 
-print('POS invoice/quotation document-number patch applied successfully.')
+# Repair the JSX conditional around the item-search clear button.
+old = "</button></div>{search.trim().length>=2&&<div className=\"absolute z-50 left-4 right-4 top-[76px]"
+new = "</button>}{search.trim().length>=2&&<div className=\"absolute z-50 left-4 right-4 top-[76px]"
+if old not in modern:
+    raise SystemExit('PATCH_MISSING: POS search clear-button JSX')
+modern = modern.replace(old, new, 1)
+
+MODERN.write_text(modern, encoding='utf-8')
+print('POS invoice/quotation patch and JSX syntax correction applied successfully.')
