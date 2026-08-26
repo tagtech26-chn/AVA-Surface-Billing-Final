@@ -1,10 +1,14 @@
+using AVASurface.Server.Infrastructure;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace AVASurface.Server.Migrations;
 
-public partial class V1_1_EnterpriseSchemaRepair : Migration
+[DbContext(typeof(BillingDbContext))]
+[Migration("20260822130000_V1_1_EnterpriseSchemaRepairFollowup")]
+public partial class V1_1_EnterpriseSchemaRepairFollowup : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
