@@ -27,6 +27,7 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<BillingDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
+builder.Services.AddScoped<CategoryPricingService>();
 builder.Services.AddScoped<BillingMasterSeedService>();
 builder.Services.AddScoped<InitialUserPasswordSeeder>();
 builder.Services.Configure<GstVerificationOptions>(builder.Configuration.GetSection("GstVerification"));
