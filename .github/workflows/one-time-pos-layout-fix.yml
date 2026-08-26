@@ -1,0 +1,48 @@
+name: One-time POS layout repair
+
+on:
+  push:
+    branches:
+      - feature/v1.1.0-enterprise-management
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Repair Modern POS item-entry layout
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/components/ModernPosBillingView.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          old_class = 'className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 items-end"'
+          new_class = 'className="pos-item-entry-grid"'
+          if old_class not in text:
+              raise SystemExit('Expected Modern POS item-entry grid was not found; refusing to modify the file.')
+          text = text.replace(old_class, new_class, 1)
+
+          old_style = ".label-modern{display:block;font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px}.field-modern{width:100%;height:40px;padding:0 12px;border-radius:12px;background:#0f172a;border:1px solid #334155;color:#f8fafc;font-size:12px;outline:none}.field-modern:focus{border-color:#6366f1;box-shadow:0 0 0 2px rgba(99,102,102,.12)}select.field-modern{cursor:pointer}input.field-modern::placeholder,textarea.field-modern::placeholder{color:#64748b}"
+          new_style = ".pos-item-entry-grid{display:grid;grid-template-columns:1fr;gap:.75rem;padding:1rem;align-items:end}.label-modern{display:block;font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px}.field-modern{width:100%;height:40px;padding:0 12px;border-radius:12px;background:#0f172a;border:1px solid #334155;color:#f8fafc;font-size:12px;outline:none}.field-modern:focus{border-color:#6366f1;box-shadow:0 0 0 2px rgba(99,102,102,.12)}select.field-modern{cursor:pointer}input.field-modern::placeholder,textarea.field-modern::placeholder{color:#64748b}@media (min-width:768px){.pos-item-entry-grid{grid-template-columns:minmax(0,6fr) minmax(90px,1fr) minmax(110px,1fr) minmax(150px,2fr) 80px}}"
+          if old_style not in text:
+              raise SystemExit('Expected Modern POS style block was not found; refusing to modify the file.')
+          text = text.replace(old_style, new_style, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+      - name: Commit source repair and remove one-time workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/ModernPosBillingView.tsx .github/workflows/one-time-pos-layout-fix.yml
+          git commit -m "fix: make POS item entry grid deterministic"
+          git push
