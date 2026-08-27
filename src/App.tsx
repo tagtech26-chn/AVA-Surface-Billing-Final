@@ -137,12 +137,14 @@ export default function App() {
       const branchManagerUserId = newInvoice.branchManagerUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(newInvoice.branchManagerUserId) ? newInvoice.branchManagerUserId : null;
       const invoiceResponse = await fetch('/api/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyId: company.id, customerId: serverCustomerId || null, salespersonId: salesperson.id, invoiceNumber: null, invoiceDate: newInvoice.date, lines: backendLines, promotionCodes: newInvoice.promoCodeApplied ? [newInvoice.promoCodeApplied] : [], paymentMethodRequested: newInvoice.paymentMethod, branchManagerDiscountPercent: Number(newInvoice.branchManagerDiscountPercent || 0), branchManagerUserId, branchManagerRemarks: newInvoice.branchManagerRemarks || null, interState: false, roundTo: 5 }) });
       if (!invoiceResponse.ok) throw new Error(`Invoice backend save failed: ${await invoiceResponse.text()}`);
-      const persisted = await invoiceResponse.json() as { id: string; invoiceNumber: string; grandTotal: number };
-      const invoiceWithDelivery: Invoice = { ...newInvoice, id: persisted.id || newInvoice.id, invoiceNumber: persisted.invoiceNumber, customer, status: 'UNPAID', amountPaid: 0, paymentsHistory: [], deliveryStatus: 'PENDING_DISPATCH' };
+      const persisted = await invoiceResponse.json() as { id: string; invoiceNumber?: string | null; quotationNumber?: string | null; grandTotal: number };
+      const documentNumber = persisted.invoiceNumber?.trim() || persisted.quotationNumber?.trim() || newInvoice.invoiceNumber;
+      const invoiceWithDelivery: Invoice = { ...newInvoice, id: persisted.id || newInvoice.id, invoiceNumber: documentNumber, quotationNumber: persisted.quotationNumber?.trim() || newInvoice.quotationNumber, customer, status: 'UNPAID', amountPaid: 0, paymentsHistory: [], deliveryStatus: 'PENDING_DISPATCH' };
       setInvoices((prev) => [invoiceWithDelivery, ...prev]);
       setProducts(updatedProducts);
       if (updatedCustomer) setCustomers((prev) => prev.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)));
-      logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS Invoice #${invoiceWithDelivery.invoiceNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}). Payment method ${newInvoice.paymentMethod} remains pending Accounts confirmation.`, invoiceWithDelivery.invoiceNumber, invoiceWithDelivery.id, 'Draft Bill', `PAYMENT_PENDING / ${newInvoice.paymentMethod}`);
+      const documentLabel = persisted.invoiceNumber?.trim() ? 'Invoice' : 'Quotation';
+      logAudit('INVOICE', 'MEDIUM', 'POS Bill Created', `Issued POS ${documentLabel} #${documentNumber} for ${invoiceWithDelivery.customer?.name} (Total: ${storeDetails.currencySymbol}${invoiceWithDelivery.grandTotal.toFixed(2)}). Payment method ${newInvoice.paymentMethod} remains pending Accounts confirmation.`, documentNumber, invoiceWithDelivery.id, 'Draft Bill', `PAYMENT_PENDING / ${newInvoice.paymentMethod}`);
       return invoiceWithDelivery;
     } catch (error) { console.error('Backend invoice save failed:', error); window.alert(error instanceof Error ? error.message : 'Unable to save invoice to the backend.'); return; }
   };
