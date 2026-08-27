@@ -1,4 +1,5 @@
 using AVASurface.Server.Controllers;
+using AVASurface.Server.Filters;
 using AVASurface.Server.Infrastructure;
 using AVASurface.Server.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -16,7 +17,10 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MinRequestBodyDataRate = null;
 });
 
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        options.Filters.Add<GlobalSalespersonDiscountFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
@@ -29,6 +33,7 @@ builder.Services.AddDbContext<BillingDbContext>(options =>
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 builder.Services.AddScoped<CategoryPricingService>();
 builder.Services.AddScoped<BillingDiscountSettingsService>();
+builder.Services.AddScoped<GlobalSalespersonDiscountFilter>();
 builder.Services.AddScoped<BillingMasterSeedService>();
 builder.Services.AddScoped<InitialUserPasswordSeeder>();
 builder.Services.Configure<GstVerificationOptions>(builder.Configuration.GetSection("GstVerification"));
