@@ -1,7 +1,6 @@
 using AVASurface.Server.Domain;
 using AVASurface.Server.Infrastructure;
 using Microsoft.EntityFrameworkCore;
-using System.Data;
 
 namespace AVASurface.Server.Services;
 
@@ -29,6 +28,12 @@ BEGIN
 END", ct);
     }
 
+    public async Task<Guid?> GetUserCompanyIdAsync(Guid? userId, CancellationToken ct = default)
+    {
+        if (!userId.HasValue) return null;
+        return await db.AppUsers.AsNoTracking().Where(x => x.Id == userId.Value && x.IsActive).Select(x => x.CompanyId).SingleOrDefaultAsync(ct);
+    }
+
     public async Task<BillingDiscountSettings?> GetAsync(Guid companyId, CancellationToken ct = default)
         => await db.Database.SqlQueryRaw<BillingDiscountSettings>(@"
 SELECT Id, CompanyId, DefaultSalespersonDiscountPercent, MaxSalespersonDiscountPercent, UpdatedAtUtc, UpdatedByUserId
@@ -41,11 +46,11 @@ WHERE CompanyId = {0}", companyId).SingleOrDefaultAsync(ct);
         if (existing is not null) return existing;
 
         var settings = new BillingDiscountSettings { CompanyId = companyId };
-        db.Database.ExecuteSqlInterpolated($@"
+        await db.Database.ExecuteSqlInterpolatedAsync($@"
 INSERT INTO dbo.BillingDiscountSettings
     (Id, CompanyId, DefaultSalespersonDiscountPercent, MaxSalespersonDiscountPercent, UpdatedAtUtc, UpdatedByUserId)
 VALUES
-    ({settings.Id}, {settings.CompanyId}, {settings.DefaultSalespersonDiscountPercent}, {settings.MaxSalespersonDiscountPercent}, {settings.UpdatedAtUtc}, {settings.UpdatedByUserId});");
+    ({settings.Id}, {settings.CompanyId}, {settings.DefaultSalespersonDiscountPercent}, {settings.MaxSalespersonDiscountPercent}, {settings.UpdatedAtUtc}, {settings.UpdatedByUserId});", ct);
         return settings;
     }
 
