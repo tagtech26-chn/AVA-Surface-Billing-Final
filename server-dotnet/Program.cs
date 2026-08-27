@@ -28,6 +28,7 @@ builder.Services.AddDbContext<BillingDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 builder.Services.AddScoped<CategoryPricingService>();
+builder.Services.AddScoped<BillingDiscountSettingsService>();
 builder.Services.AddScoped<BillingMasterSeedService>();
 builder.Services.AddScoped<InitialUserPasswordSeeder>();
 builder.Services.Configure<GstVerificationOptions>(builder.Configuration.GetSection("GstVerification"));
@@ -126,11 +127,11 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();
 
-    // Development convenience only: bring the local SQL schema up to the current v1.1
-    // migration before the UI starts. Production deployments should apply migrations
-    // explicitly and never auto-migrate business data.
     if (app.Environment.IsDevelopment())
         await db.Database.MigrateAsync();
+
+    var discountSettings = scope.ServiceProvider.GetRequiredService<BillingDiscountSettingsService>();
+    await discountSettings.EnsureSchemaAsync();
 
     var partitionService = scope.ServiceProvider.GetRequiredService<MonthlyInvoicePartitionService>();
     await partitionService.EnsureCurrentMonthAsync();
