@@ -41,16 +41,13 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     public async Task<ActionResult<IEnumerable<ProductDto>>> Search([FromQuery] string q, [FromQuery] int limit = 10, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(q)) return Ok(Array.Empty<ProductDto>());
-        limit = Math.Clamp(limit, 1, 25); var term = q.Trim();
-        var products = await db.Products.AsNoTracking().Where(x => x.IsActive && (x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term)))).OrderBy(x => x.Name.StartsWith(term) ? 0 : 1).ThenBy(x => x.Name).Take(limit).ToListAsync(cancellationToken);
-        return Ok(products.Select(ToDto));
+        limit = Math.Clamp(limit, 1, 25); var term = q.Trim(); var products = await db.Products.AsNoTracking().Where(x => x.IsActive && (x.Name.Contains(term) || x.Sku.Contains(term) || (x.HsnCode != null && x.HsnCode.Contains(term)))).OrderBy(x => x.Name.StartsWith(term) ? 0 : 1).ThenBy(x => x.Name).Take(limit).ToListAsync(cancellationToken); return Ok(products.Select(ToDto));
     }
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ProductDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
-        var product = await db.Products.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (product is null) return NotFound();
+        var product = await db.Products.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken); if (product is null) return NotFound();
         if ((User.IsInRole("CASHIER") || User.IsInRole("BILLING_USER")) && !product.IsActive) return NotFound();
         return Ok(ToDto(product));
     }
@@ -59,8 +56,7 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ProductDto>> Create(ProductRequest input, CancellationToken cancellationToken)
     {
-        var companyId = await ResolveCompanyId(input.CompanyId, cancellationToken);
-        if (companyId is null || string.IsNullOrWhiteSpace(input.Sku) || string.IsNullOrWhiteSpace(input.Name)) return BadRequest("A company, SKU and product name are required.");
+        var companyId = await ResolveCompanyId(input.CompanyId, cancellationToken); if (companyId is null || string.IsNullOrWhiteSpace(input.Sku) || string.IsNullOrWhiteSpace(input.Name)) return BadRequest("A company, SKU and product name are required.");
         var sku = input.Sku.Trim(); if (await db.Products.AnyAsync(x => x.CompanyId == companyId && x.Sku == sku, cancellationToken)) return Conflict("A product with this SKU already exists for the company.");
         var product = FromRequest(input, companyId.Value); db.Products.Add(product); await db.SaveChangesAsync(cancellationToken); return CreatedAtAction(nameof(GetById), new { id = product.Id }, ToDto(product));
     }
@@ -77,19 +73,29 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
 
     [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
     [HttpPut("sync")]
-    public async Task<ActionResult<IEnumerable<ProductDto>>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<BulkSyncResult>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken = default)
     {
         var items = input.ToList(); var companyId = await ResolveCompanyId(null, cancellationToken); if (companyId is null) return BadRequest("No active company is configured.");
-        var changedProducts = new List<Product>();
-        foreach (var item in items.Where(x => !string.IsNullOrWhiteSpace(x.Sku) && !string.IsNullOrWhiteSpace(x.Name)))
+        var created = new List<BulkSyncItemResult>(); var updated = new List<BulkSyncItemResult>(); var skipped = new List<BulkSyncItemResult>();
+        foreach (var item in items)
         {
+            var sku = item.Sku?.Trim() ?? string.Empty; var name = item.Name?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(sku) || string.IsNullOrWhiteSpace(name)) { skipped.Add(new BulkSyncItemResult(item.Id, sku, "Required SKU or Name missing.")); continue; }
             Guid? requestedId = Guid.TryParse(item.Id, out var parsedId) ? parsedId : null;
             var product = requestedId.HasValue ? await db.Products.FirstOrDefaultAsync(x => x.Id == requestedId && x.CompanyId == companyId, cancellationToken) : null;
-            product ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == item.Sku, cancellationToken);
-            if (product is null) { product = new Product { Id = requestedId ?? Guid.NewGuid(), CompanyId = companyId.Value }; db.Products.Add(product); }
-            product.Sku = item.Sku.Trim(); product.Name = item.Name.Trim(); product.HsnCode = item.HsnCode; product.Unit = item.Unit ?? "PCS"; product.CostPrice = item.CostPrice; product.SellingPrice = item.SellingPrice; product.GstRate = item.TaxRate; product.StockQuantity = item.Stock; product.ReorderLevel = item.ReorderLevel; changedProducts.Add(product);
+            product ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == sku, cancellationToken);
+            if (product is null)
+            {
+                product = new Product { Id = requestedId ?? Guid.NewGuid(), CompanyId = companyId.Value, Sku = sku, Name = name, HsnCode = item.HsnCode, Unit = item.Unit ?? "PCS", CostPrice = item.CostPrice, SellingPrice = item.SellingPrice, GstRate = item.TaxRate, StockQuantity = item.Stock, ReorderLevel = item.ReorderLevel };
+                db.Products.Add(product); created.Add(new BulkSyncItemResult(product.Id.ToString(), sku, "Created"));
+            }
+            else
+            {
+                product.Sku = sku; product.Name = name; product.HsnCode = item.HsnCode; product.Unit = item.Unit ?? "PCS"; product.CostPrice = item.CostPrice; product.SellingPrice = item.SellingPrice; product.GstRate = item.TaxRate; product.StockQuantity = item.Stock; product.ReorderLevel = item.ReorderLevel; updated.Add(new BulkSyncItemResult(product.Id.ToString(), sku, "Updated"));
+            }
         }
-        await db.SaveChangesAsync(cancellationToken); return Ok(changedProducts.Select(ToDto));
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new BulkSyncResult(items.Count, created.Count, updated.Count, skipped.Count, 0, created, updated, skipped, Array.Empty<BulkSyncItemResult>()));
     }
 
     private async Task<Guid?> ResolveCompanyId(Guid? requestedCompanyId, CancellationToken cancellationToken)
@@ -105,4 +111,6 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     public sealed record ProductRequest(Guid? CompanyId, string Sku, string Name, string? HsnCode, string? Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal GstRate, bool IsActive = true);
     public sealed record ProductSyncItem(string Id, string Sku, string Name, string? HsnCode, string? Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal TaxRate);
     public sealed record ProductDto(Guid Id, string Sku, string Name, string? HsnCode, string Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal TaxRate, bool IsActive);
+    public sealed record BulkSyncItemResult(string Id, string Sku, string Result);
+    public sealed record BulkSyncResult(int total, int createdCount, int updatedCount, int skippedCount, int failedCount, IReadOnlyCollection<BulkSyncItemResult> created, IReadOnlyCollection<BulkSyncItemResult> updated, IReadOnlyCollection<BulkSyncItemResult> skipped, IReadOnlyCollection<BulkSyncItemResult> failed);
 }
