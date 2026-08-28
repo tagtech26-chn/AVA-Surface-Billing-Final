@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
 
@@ -60,11 +61,22 @@ builder.Services
             ValidIssuer = "AVASurface",
             ValidAudience = "AVASurface.LocalBilling",
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            RoleClaimType = ClaimTypes.Role,
+            NameClaimType = ClaimTypes.Name,
             ClockSkew = TimeSpan.FromMinutes(1)
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("InventoryWrite", policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(context => context.User.Claims.Any(claim =>
+                (claim.Type == ClaimTypes.Role || claim.Type == "role") &&
+                (string.Equals(claim.Value, "ADMIN", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(claim.Value, "MANAGER", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(claim.Value, "BRANCH_MANAGER", StringComparison.OrdinalIgnoreCase)))));
+});
 
 var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
@@ -104,7 +116,7 @@ app.Use(async (context, next) =>
             return;
         }
 
-        var role = context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+        var role = context.User.FindFirst(ClaimTypes.Role)?.Value;
         if (!string.Equals(role, "CASHIER", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(role, "BILLING_USER", StringComparison.OrdinalIgnoreCase))
         {
