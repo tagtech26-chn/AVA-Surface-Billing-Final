@@ -30,3 +30,10 @@ img[src*="images.unsplash.com"] {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* POS unit selector: keep only the business units required for billing. */
+select.field-modern option[value="sqft"],
+select.field-modern option[value="sqmt"],
+select.field-modern option[value="set"] {
+  display: none;
+}
