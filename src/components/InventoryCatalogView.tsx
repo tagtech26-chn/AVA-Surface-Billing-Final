@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight, Edit3, FileSpreadsheet, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { Product } from '../types';
 import { TileBatchAddModal } from './TileBatchAddModal';
+import { authHeaders } from '../lib/utils';
 
 interface InventoryCatalogViewProps {
   onSaveProduct: (product: Product) => void;
@@ -142,7 +143,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
       };
       const response = await fetch(isNew ? '/api/products' : `/api/products/${editing.id}`, {
         method: isNew ? 'POST' : 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders(true) },
         body: JSON.stringify(body)
       });
       if (!response.ok) throw new Error(await response.text() || `Save failed (${response.status})`);
@@ -162,7 +163,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
     try {
       const response = await fetch(`/api/products/${product.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders(true) },
         body: JSON.stringify({
           companyId: null,
           sku: product.sku,
@@ -192,7 +193,7 @@ export const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
       const chunk = products.slice(i, i + chunkSize);
       const response = await fetch('/api/products/sync', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders(true) },
         body: JSON.stringify(chunk.map((p) => ({
           id: p.id,
           sku: p.sku,
