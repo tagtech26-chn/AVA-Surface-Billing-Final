@@ -75,7 +75,7 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
         await db.SaveChangesAsync(cancellationToken); return Ok(ToDto(product));
     }
 
-    [Authorize(Roles = "ADMIN")]
+    [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
     [HttpPut("sync")]
     public async Task<ActionResult<IEnumerable<ProductDto>>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken = default)
     {
