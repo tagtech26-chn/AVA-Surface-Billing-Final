@@ -6,7 +6,7 @@ export interface StockAdjustment { id: string; productId: string; productName: s
 export interface Customer { id: string; code?: string; name: string; phone: string; email?: string; customerType?: 'NORMAL' | 'LEDGER'; gstNumber?: string; gstLegalName?: string; gstTradeName?: string; gstStatus?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED'; gstState?: string; gstAddress?: string; taxNumber?: string; address?: string; billingAddress?: string; shippingAddress?: string; city?: string; state?: string; stateCode?: string; isActive?: boolean; loyaltyPoints: number; totalSpent: number; outstandingBalance: number; }
 export type DiscountType = 'PERCENTAGE' | 'FLAT_AMOUNT' | 'BUY_X_GET_Y';
 export interface PromoRule { id: string; code: string; title: string; description: string; discountType: DiscountType; discountValue: number; minOrderValue: number; maxDiscountAmount?: number; validFrom: string; validUntil: string; isActive: boolean; autoApply: boolean; usageCount: number; usageLimit?: number; targetCategory?: string; }
-export type TileQtyUnit = 'box' | 'pcs' | 'sqft' | 'sqmt' | 'set';
+export type TileQtyUnit = 'box' | 'pcs' | 'bags' | 'packets' | 'sqft' | 'sqmt' | 'set';
 export interface CartItem { product: Product; quantity: number; inputQuantity?: number; selectedUnit?: TileQtyUnit; itemWeightKg?: number; discountAmount: number; discountPercent?: number; finalUnitPrice: number; totalPrice: number; }
 export type PaymentMethod = 'CASH' | 'CARD' | 'UPI_QR' | 'BANK_TRANSFER' | 'STORE_CREDIT' | 'ON_ACCOUNT';
 export type InvoiceStatus = 'PAID' | 'UNPAID' | 'PARTIAL' | 'REFUNDED' | 'CANCELLED';
