@@ -3,6 +3,8 @@ using AVASurface.Server.Infrastructure;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using System.Text.Json;
 
 namespace AVASurface.Server.Controllers;
 
@@ -45,7 +47,7 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<ActionResult<ProductDto>> GetById(Guid id, CancellationToken cancellationToken)
+    public async Task<ActionResult<ProductDto>> GetById(Guid id, CancellationToken cancellationToken = default)
     {
         var product = await db.Products.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken); if (product is null) return NotFound();
         if ((User.IsInRole("CASHIER") || User.IsInRole("BILLING_USER")) && !product.IsActive) return NotFound();
@@ -75,27 +77,115 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     [HttpPut("sync")]
     public async Task<ActionResult<BulkSyncResult>> Sync(IEnumerable<ProductSyncItem> input, CancellationToken cancellationToken = default)
     {
-        var items = input.ToList(); var companyId = await ResolveCompanyId(null, cancellationToken); if (companyId is null) return BadRequest("No active company is configured.");
-        var created = new List<BulkSyncItemResult>(); var updated = new List<BulkSyncItemResult>(); var skipped = new List<BulkSyncItemResult>();
+        var items = input.ToList();
+        if (items.Count > 500) return BadRequest("A bulk import is limited to 500 rows per batch.");
+        var companyId = await ResolveCompanyId(null, cancellationToken); if (companyId is null) return BadRequest("No active company is configured.");
+
+        var created = new List<BulkSyncItemResult>();
+        var updated = new List<BulkSyncItemResult>();
+        var skipped = new List<BulkSyncItemResult>();
+        var failed = new List<BulkSyncItemResult>();
+        var seenSkus = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var item in items)
         {
-            var sku = item.Sku?.Trim() ?? string.Empty; var name = item.Name?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(sku) || string.IsNullOrWhiteSpace(name)) { skipped.Add(new BulkSyncItemResult(item.Id, sku, "Required SKU or Name missing.")); continue; }
-            Guid? requestedId = Guid.TryParse(item.Id, out var parsedId) ? parsedId : null;
-            var product = requestedId.HasValue ? await db.Products.FirstOrDefaultAsync(x => x.Id == requestedId && x.CompanyId == companyId, cancellationToken) : null;
-            product ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == sku, cancellationToken);
-            if (product is null)
+            try
             {
-                product = new Product { Id = requestedId ?? Guid.NewGuid(), CompanyId = companyId.Value, Sku = sku, Name = name, HsnCode = item.HsnCode, Unit = item.Unit ?? "PCS", CostPrice = item.CostPrice, SellingPrice = item.SellingPrice, GstRate = item.TaxRate, StockQuantity = item.Stock, ReorderLevel = item.ReorderLevel };
-                db.Products.Add(product); created.Add(new BulkSyncItemResult(product.Id.ToString(), sku, "Created"));
+                var sku = item.Sku?.Trim() ?? string.Empty;
+                var name = item.Name?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(sku) || string.IsNullOrWhiteSpace(name)) { skipped.Add(new BulkSyncItemResult(item.Id, sku, "Required SKU or Name missing.")); continue; }
+                if (!seenSkus.Add(sku)) { skipped.Add(new BulkSyncItemResult(item.Id, sku, "Duplicate SKU in this import file.")); continue; }
+                if (item.CostPrice < 0 || item.SellingPrice < 0 || item.Stock < 0 || item.ReorderLevel < 0) { skipped.Add(new BulkSyncItemResult(item.Id, sku, "Cost, selling price, stock and reorder level cannot be negative.")); continue; }
+                if (item.TaxRate < 0 || item.TaxRate > 100) { skipped.Add(new BulkSyncItemResult(item.Id, sku, "GST rate must be between 0 and 100.")); continue; }
+
+                Guid? requestedId = Guid.TryParse(item.Id, out var parsedId) ? parsedId : null;
+                var product = requestedId.HasValue ? await db.Products.FirstOrDefaultAsync(x => x.Id == requestedId && x.CompanyId == companyId, cancellationToken) : null;
+                product ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == sku, cancellationToken);
+
+                if (product is null)
+                {
+                    product = new Product { Id = requestedId ?? Guid.NewGuid(), CompanyId = companyId.Value, Sku = sku, Name = name, HsnCode = item.HsnCode, Unit = item.Unit ?? "PCS", CostPrice = item.CostPrice, SellingPrice = item.SellingPrice, GstRate = item.TaxRate, StockQuantity = item.Stock, ReorderLevel = item.ReorderLevel, IsActive = true, UpdatedAtUtc = DateTime.UtcNow };
+                    db.Products.Add(product);
+                    created.Add(new BulkSyncItemResult(product.Id.ToString(), sku, "Created"));
+                }
+                else
+                {
+                    product.Sku = sku; product.Name = name; product.HsnCode = item.HsnCode; product.Unit = item.Unit ?? "PCS"; product.CostPrice = item.CostPrice; product.SellingPrice = item.SellingPrice; product.GstRate = item.TaxRate; product.StockQuantity = item.Stock; product.ReorderLevel = item.ReorderLevel; product.UpdatedAtUtc = DateTime.UtcNow;
+                    updated.Add(new BulkSyncItemResult(product.Id.ToString(), sku, "Updated"));
+                }
             }
-            else
+            catch (Exception ex)
             {
-                product.Sku = sku; product.Name = name; product.HsnCode = item.HsnCode; product.Unit = item.Unit ?? "PCS"; product.CostPrice = item.CostPrice; product.SellingPrice = item.SellingPrice; product.GstRate = item.TaxRate; product.StockQuantity = item.Stock; product.ReorderLevel = item.ReorderLevel; updated.Add(new BulkSyncItemResult(product.Id.ToString(), sku, "Updated"));
+                var sku = item.Sku?.Trim() ?? string.Empty;
+                failed.Add(new BulkSyncItemResult(item.Id, sku, ex.Message));
+                db.ChangeTracker.Clear();
             }
         }
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            foreach (var pending in created.Concat(updated).ToList())
+                failed.Add(new BulkSyncItemResult(pending.Id, pending.Sku, $"Database save failed: {ex.Message}"));
+            created.Clear();
+            updated.Clear();
+        }
+
+        var result = new BulkSyncResult(items.Count, created.Count, updated.Count, skipped.Count, failed.Count, created, updated, skipped, failed);
+        var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var parsedUserId) ? parsedUserId : (Guid?)null;
+        var details = JsonSerializer.Serialize(new
+        {
+            total = result.total,
+            created = result.createdCount,
+            updated = result.updatedCount,
+            skipped = result.skippedCount,
+            failed = result.failedCount,
+            createdItems = result.created,
+            updatedItems = result.updated,
+            skippedItems = result.skipped,
+            failedItems = result.failed
+        });
+        db.AuditLogs.Add(new AuditLog { UserId = userId, Action = "BULK_IMPORT", EntityName = "Product", Details = details });
         await db.SaveChangesAsync(cancellationToken);
-        return Ok(new BulkSyncResult(items.Count, created.Count, updated.Count, skipped.Count, 0, created, updated, skipped, Array.Empty<BulkSyncItemResult>()));
+        return Ok(result);
+    }
+
+    [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
+    [HttpGet("bulk-import/history")]
+    public async Task<ActionResult<IEnumerable<BulkImportHistoryDto>>> GetBulkImportHistory([FromQuery] int limit = 25, CancellationToken cancellationToken = default)
+    {
+        limit = Math.Clamp(limit, 1, 100);
+        var rows = await db.AuditLogs.AsNoTracking()
+            .Where(x => x.Action == "BULK_IMPORT" && x.EntityName == "Product")
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+
+        return Ok(rows.Select(x =>
+        {
+            using var document = JsonDocument.Parse(x.Details ?? "{}");
+            var root = document.RootElement;
+            return new BulkImportHistoryDto(
+                x.Id,
+                x.UserId,
+                x.CreatedAtUtc,
+                root.TryGetProperty("total", out var total) ? total.GetInt32() : 0,
+                root.TryGetProperty("created", out var created) ? created.GetInt32() : 0,
+                root.TryGetProperty("updated", out var updated) ? updated.GetInt32() : 0,
+                root.TryGetProperty("skipped", out var skipped) ? skipped.GetInt32() : 0,
+                root.TryGetProperty("failed", out var failed) ? failed.GetInt32() : 0);
+        }));
+    }
+
+    [Authorize(Roles = "ADMIN,MANAGER,BRANCH_MANAGER")]
+    [HttpGet("bulk-import/history/{auditId:long}")]
+    public async Task<IActionResult> GetBulkImportHistoryDetail(long auditId, CancellationToken cancellationToken = default)
+    {
+        var row = await db.AuditLogs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == auditId && x.Action == "BULK_IMPORT" && x.EntityName == "Product", cancellationToken);
+        return row is null ? NotFound() : Content(row.Details ?? "{}", "application/json");
     }
 
     private async Task<Guid?> ResolveCompanyId(Guid? requestedCompanyId, CancellationToken cancellationToken)
@@ -113,4 +203,5 @@ public sealed class ProductsController(BillingDbContext db) : ControllerBase
     public sealed record ProductDto(Guid Id, string Sku, string Name, string? HsnCode, string Unit, decimal CostPrice, decimal SellingPrice, decimal Stock, decimal ReorderLevel, decimal TaxRate, bool IsActive);
     public sealed record BulkSyncItemResult(string Id, string Sku, string Result);
     public sealed record BulkSyncResult(int total, int createdCount, int updatedCount, int skippedCount, int failedCount, IReadOnlyCollection<BulkSyncItemResult> created, IReadOnlyCollection<BulkSyncItemResult> updated, IReadOnlyCollection<BulkSyncItemResult> skipped, IReadOnlyCollection<BulkSyncItemResult> failed);
+    public sealed record BulkImportHistoryDto(long AuditId, Guid? UserId, DateTime CreatedAtUtc, int Total, int Created, int Updated, int Skipped, int Failed);
 }
