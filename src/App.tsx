@@ -38,6 +38,20 @@ export default function App() {
   const activeUser = users.find((u) => u.id === activeUserId) || users[0];
 
   useEffect(() => {
+    if (!activeUser) return;
+    const defaultTabByRole: Record<UserProfile['role'], string> = {
+      ADMIN: 'enterprise',
+      MANAGER: 'accounts',
+      BRANCH_MANAGER: 'accounts',
+      ACCOUNTANT: 'accounts',
+      WAREHOUSE: 'accounts',
+      CASHIER: 'pos',
+      BILLING_USER: 'pos',
+    };
+    setActiveTab(defaultTabByRole[activeUser.role] || 'pos');
+  }, [activeUserId, activeUser]);
+
+  useEffect(() => {
     let cancelled = false;
     void loadAuditLogs().then((rows) => {
       if (!cancelled) setAuditLogs(rows);
@@ -186,7 +200,7 @@ export default function App() {
       {activeTab === 'users' && <div className="space-y-4"><div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-2"><h2 className="text-xl font-bold text-white">Staff Accounts &amp; User Controls</h2><p className="text-xs text-slate-400">Switch active staff session or add new cashier, manager, accountant, or warehouse profiles.</p><button onClick={() => setIsUserControlOpen(true)} className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow transition">Manage User Profiles &amp; Roles</button></div></div>}
       {activeTab === 'audit' && <AuditLogView auditLogs={auditLogs} onClearLogs={() => { void purgeAuditLogs().then(() => setAuditLogs([])).catch((error) => window.alert(`Audit log purge failed: ${error instanceof Error ? error.message : String(error)}`)); }} userRole={activeUser.role} currencySymbol={storeDetails.currencySymbol} />}
     </main></div>
-    <UserControlModal isOpen={isUserControlOpen} onClose={() => setIsUserControlOpen(false)} users={users} activeUser={activeUser} onSwitchUser={(user) => setActiveUserId(user.id)} onCreateUser={handleCreateUser} currencySymbol={storeDetails.currencySymbol} />
+    <UserControlModal isOpen={isUserControlOpen} onClose={() => setIsUserControlOpen(false)} users={users} activeUser={activeUser} onSwitchUser={(user) => { setActiveUserId(user.id); setIsUserControlOpen(false); }} onCreateUser={handleCreateUser} currencySymbol={storeDetails.currencySymbol} />
     <PrintableReceiptModal invoice={printingInvoice} onClose={() => setPrintingInvoice(null)} storeDetails={storeDetails} />
   </div>;
 }
