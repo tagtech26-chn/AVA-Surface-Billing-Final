@@ -21,6 +21,7 @@ export interface Invoice {
   workflowStatus?: string;
   creditNoteAmount?: number;
   creditNoteReason?: string;
+  paymentMethodRequested?: PaymentMethod;
   paymentConfirmedAtUtc?: string;
   paymentMethodConfirmed?: PaymentMethod;
   paymentSpecificReference?: string;
