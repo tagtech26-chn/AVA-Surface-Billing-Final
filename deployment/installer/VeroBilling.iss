@@ -42,8 +42,6 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 
 [Code]
 const
-  EnvKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
-  ServiceSid = 'NT SERVICE\VeroBillingService';
   ConnectionString = 'Server=.\SQLEXPRESS;Database=AVASurfaceBilling;Trusted_Connection=True;TrustServerCertificate=True';
 
 function RunAndWait(const FileName, Params, WorkingDir: String; Show: Integer): Boolean;
@@ -72,16 +70,6 @@ begin
     Result := Result + Chars[Random(Length(Chars)) + 1];
 end;
 
-function GetJwtSecret: String;
-var
-  Existing: String;
-begin
-  if RegQueryStringValue(HKLM, EnvKey, 'Authentication__JwtSecret', Existing) and (Length(Existing) >= 32) then
-    Result := Existing
-  else
-    Result := GenerateSecret;
-end;
-
 procedure WriteProductionConfig;
 var
   ConfigPath: String;
@@ -92,7 +80,7 @@ begin
   if FileExists(ConfigPath) then
     Exit;
 
-  Secret := GetJwtSecret;
+  Secret := GenerateSecret;
   Json := '{' + #13#10 +
     '  "ConnectionStrings": {' + #13#10 +
     '    "DefaultConnection": "Server=.\\SQLEXPRESS;Database=AVASurfaceBilling;Trusted_Connection=True;TrustServerCertificate=True"' + #13#10 +
@@ -128,7 +116,6 @@ begin
     '}' + #13#10;
 
   SaveStringToFile(ConfigPath, Json, False);
-  RegWriteStringValue(HKLM, EnvKey, 'Authentication__JwtSecret', Secret);
 end;
 
 procedure ProtectProductionConfig;
@@ -145,7 +132,6 @@ end;
 procedure ConfigureService;
 var
   ExePath: String;
-  ResultCode: Integer;
 begin
   ExePath := ExpandConstant('{app}\{#AppExe}');
 
