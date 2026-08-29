@@ -60,9 +60,6 @@ IF IS_ROLEMEMBER(N'db_datareader', N'$escapedService') <> 1
 IF IS_ROLEMEMBER(N'db_datawriter', N'$escapedService') <> 1
     ALTER ROLE [db_datawriter] ADD MEMBER [$escapedService];
 
-IF IS_ROLEMEMBER(N'db_ddladmin', N'$escapedService') <> 1
-    ALTER ROLE [db_ddladmin] ADD MEMBER [$escapedService];
-
 GRANT EXECUTE TO [$escapedService];
 "@
 
