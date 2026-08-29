@@ -28,7 +28,12 @@ builder.Services.AddControllers(options =>
         options.JsonSerializerOptions.MaxDepth = 32;
     });
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    // Enterprise and billing controllers contain same-named nested request records.
+    // Use the full type name so Swagger/OpenAPI can generate unique schemas.
+    options.CustomSchemaIds(type => type.FullName?.Replace('+', '.') ?? type.Name);
+});
 builder.Services.AddDbContext<BillingDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
