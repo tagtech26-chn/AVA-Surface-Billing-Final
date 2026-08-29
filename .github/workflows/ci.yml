@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -39,6 +39,24 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Synchronize npm lockfile
+        if: github.event_name == 'push'
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Commit synchronized lockfile
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json is already synchronized."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: synchronize npm lockfile"
+          git push
 
       - name: Install frontend dependencies
         run: npm ci
