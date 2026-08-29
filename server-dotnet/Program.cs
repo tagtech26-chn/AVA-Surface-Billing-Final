@@ -5,6 +5,7 @@ using AVASurface.Server.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Security.Claims;
@@ -12,6 +13,11 @@ using System.Text;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseWindowsService(options =>
+{
+    options.ServiceName = "Vero Billing System";
+});
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -31,11 +37,8 @@ builder.Services.AddControllers(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
-    // Enterprise and billing controllers contain same-named nested request records.
-    // Use the full type name so Swagger/OpenAPI can generate unique schemas.
     options.CustomSchemaIds(type => type.FullName?.Replace('+', '.') ?? type.Name);
 
-    // Expose JWT authentication in Swagger so protected endpoints can be tested.
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header. Enter: Bearer {token}",
@@ -114,16 +117,16 @@ var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
     .Get<string[]>() ?? Array.Empty<string>();
 
-if (allowedOrigins.Length == 0)
-    throw new InvalidOperationException("Cors:AllowedOrigins must contain at least one trusted frontend origin.");
-
-builder.Services.AddCors(options =>
+if (allowedOrigins.Length > 0)
 {
-    options.AddPolicy("Frontend", policy =>
-        policy.WithOrigins(allowedOrigins)
-            .AllowAnyHeader()
-            .AllowAnyMethod());
-});
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("Frontend", policy =>
+            policy.WithOrigins(allowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod());
+    });
+}
 
 var app = builder.Build();
 
@@ -133,7 +136,12 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors("Frontend");
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+if (allowedOrigins.Length > 0)
+    app.UseCors("Frontend");
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -193,4 +201,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapControllers();
+app.MapFallbackToFile("index.html");
+
 await app.RunAsync();
