@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { getEntity, saveEntity } from "./server/db";
 import { INITIAL_PRODUCTS, INITIAL_CUSTOMERS, INITIAL_PROMOS, INITIAL_INVOICES, INITIAL_EXPENSES, INITIAL_USERS, INITIAL_STORE_DETAILS, INITIAL_AUDIT_LOGS } from "./src/data/seedData";
@@ -11,12 +10,6 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DOTNET_API_URL = process.env.VITE_API_URL || "http://localhost:5080";
 app.use(express.json({ limit: "2mb" }));
-
-function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") return null;
-  return new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "avasurface-billing-system" } } });
-}
 
 const entityDefaults: Record<string, unknown> = { products: INITIAL_PRODUCTS, customers: INITIAL_CUSTOMERS, promos: INITIAL_PROMOS, invoices: INITIAL_INVOICES, expenses: INITIAL_EXPENSES, users: INITIAL_USERS, storeDetails: INITIAL_STORE_DETAILS, auditLogs: INITIAL_AUDIT_LOGS, stockLogs: [], drafts: [] };
 const allowedEntities = new Set(Object.keys(entityDefaults));
@@ -66,18 +59,6 @@ app.get("/api/health", async (_req, res) => { try { await getEntity("__health__"
 app.get("/api/data/:entity", async (req, res) => { const { entity } = req.params; if (!allowedEntities.has(entity)) return res.status(404).json({ error: "Unknown entity" }); try { const data = await getEntity(entity, entityDefaults[entity]); res.json({ entity, data, source: "server" }); } catch (error) { console.error(`GET /api/data/${entity} failed:`, error); res.status(500).json({ error: "Unable to load server data" }); } });
 app.put("/api/data/:entity", async (req, res) => { const { entity } = req.params; if (!allowedEntities.has(entity)) return res.status(404).json({ error: "Unknown entity" }); if (typeof req.body?.data === "undefined") return res.status(400).json({ error: "Request body must contain data" }); try { await saveEntity(entity, req.body.data); res.json({ entity, saved: true, source: "server", updatedAt: new Date().toISOString() }); } catch (error) { console.error(`PUT /api/data/${entity} failed:`, error); res.status(500).json({ error: "Unable to save server data" }); } });
 app.post("/api/data/bootstrap", async (_req, res) => { try { for (const [entity, data] of Object.entries(entityDefaults)) { const existing = await getEntity(entity, null); if (existing === null) await saveEntity(entity, data); } res.json({ initialized: true, entities: [...allowedEntities], source: "server" }); } catch (error) { console.error("Bootstrap failed:", error); res.status(500).json({ error: "Unable to initialize server data" }); } });
-
-app.post("/api/ai-insights", async (req, res) => {
-  const { metrics, inventoryAlerts, salesSummary, requestType } = req.body;
-  const defaultFallbackInsight = { insight: "Current sales trends show steady momentum.", recommendations: ["Maintain safety stock on top-selling tiles.", "Run targeted promotions on slower-moving products.", "Follow up on outstanding unpaid accounts."], promoIdea: { code: "BUILD10", discount: "10%", description: "10% off on bulk tile orders." } };
-  const defaultFallbackPromo = { promoCode: "TILESPECIAL15", title: "Premium Tile & Mosaic Special", discountText: "15% OFF", targetCategory: "PGVT & Ceramic Wall Tiles", marketingCopy: "Upgrade your living space with premium tiles.", recommendedMinSpend: 200 };
-  try {
-    const ai = getGeminiClient(); if (!ai) return res.json(requestType === "promo_generator" ? defaultFallbackPromo : defaultFallbackInsight);
-    const prompt = requestType === "promo_generator" ? `You are an expert small business marketing consultant. Given inventory context ${JSON.stringify(inventoryAlerts || [])} and business metrics ${JSON.stringify(metrics || {})}, generate a promotion campaign. Respond as JSON with keys: promoCode, title, discountText, targetCategory, marketingCopy, recommendedMinSpend.` : `You are a CFO and small business growth advisor. Analyze metrics ${JSON.stringify(metrics)}, low stock ${JSON.stringify(inventoryAlerts)}, sales ${JSON.stringify(salesSummary)}. Respond as JSON with keys: insight, recommendations (array of 3 strings), promoIdea ({ code, discount, description }).`;
-    let responseText = ""; for (let attempt = 1; attempt <= 2; attempt++) { try { const response = await ai.models.generateContent({ model: "gemini-3.6-flash", contents: prompt, config: { responseMimeType: "application/json" } }); responseText = response.text || ""; break; } catch (error) { if (attempt === 2) throw error; await new Promise(resolve => setTimeout(resolve, 1000)); } }
-    if (!responseText) throw new Error("Empty response from Gemini API"); return res.json(JSON.parse(responseText));
-  } catch (error) { console.error("AI Insights API Error:", error); return res.json(requestType === "promo_generator" ? defaultFallbackPromo : defaultFallbackInsight); }
-});
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
