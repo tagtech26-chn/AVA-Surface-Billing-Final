@@ -3,15 +3,19 @@ name: AVASurface v1.1 CI
 on:
   push:
     branches:
-      - feature/v1.1.0-enterprise-management
+      - main
+      - 'feature/**'
   pull_request:
     branches:
-      - feature/v1.1.0-enterprise-management
-      - release/v1.0.0-frozen
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
