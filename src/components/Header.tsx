@@ -17,7 +17,6 @@ export const Header: React.FC<HeaderProps> = ({
   storeDetails,
   activeUser,
   onOpenUserControl,
-  onResetSeedData,
   setActiveTab,
   lowStockProducts = []
 }) => {
@@ -87,13 +86,9 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
-          <button onClick={onResetSeedData} title="Reset to Demo Seed Data" className="p-2 text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition border border-slate-700 flex items-center gap-1.5 text-xs">
-            <RefreshCw className="w-3.5 h-3.5" /><span className="hidden md:inline">Reset Demo</span>
-          </button>
-
           <button onClick={onOpenUserControl} className="flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 transition-colors px-3 py-1.5 rounded-xl border border-slate-700 group text-left">
             <div className="relative"><img src={activeUser.avatar} alt={activeUser.name} className="w-8 h-8 rounded-lg object-cover ring-2 ring-amber-500/30 group-hover:ring-amber-400 transition" /><span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-slate-900" /></div>
-            <div className="hidden sm:block"><div className="flex items-center space-x-1.5"><span className="text-xs font-semibold text-slate-200 group-hover:text-white transition">{activeUser.name}</span><span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${getRoleBadgeColor(activeUser.role)}`}>{activeUser.role}</span></div><p className="text-[10px] text-slate-400">Click to switch role / PIN</p></div>
+            <div className="hidden sm:block"><div className="flex items-center space-x-1.5"><span className="text-xs font-semibold text-slate-200 group-hover:text-white transition">{activeUser.name}</span><span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${getRoleBadgeColor(activeUser.role)}`}>{activeUser.role}</span></div></div>
             <User className="w-4 h-4 text-slate-400 group-hover:text-amber-400 transition sm:hidden" />
           </button>
         </div>
