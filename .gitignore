@@ -10,6 +10,8 @@ server-data/
 
 server-dotnet/bin/
 server-dotnet/obj/
+server-dotnet/wwwroot/
 
-server-dotnet/bin/
-server-dotnet/obj/
+artifacts/
+deployment/output/
+deployment/prerequisites/*.exe
