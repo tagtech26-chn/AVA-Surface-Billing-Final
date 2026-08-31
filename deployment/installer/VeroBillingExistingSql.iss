@@ -31,12 +31,11 @@ Source: "..\scripts\Initialize-Sql.ps1"; DestDir: "{app}\database"; Flags: ignor
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{code:GetAppUrl}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{code:GetAppUrl}"
-Name: "{group}\Production Configuration"; Filename: "{app}\AVA-Surface-Production.json"
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Vero Billing System (TCP 5080)"""; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=\"Vero Billing System (TCP 5080)\""; Flags: runhidden waituntilterminated skipifdoesntexist
 
 [Code]
 var
@@ -60,11 +59,6 @@ begin
   Result := Exec(ExpandConstant('{sys}\sc.exe'), 'query "' + Name + '"', '', SW_HIDE, ewWaitUntilTerminated, R) and (R = 0);
 end;
 
-function GetAppUrl(P: String): String;
-begin
-  Result := 'http://' + ServerAddress + ':5080';
-end;
-
 function NormalizeAddress(V: String): String;
 begin
   Result := Trim(V);
@@ -74,6 +68,11 @@ begin
     Delete(Result, 1, 8);
   while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
     Delete(Result, Length(Result), 1);
+end;
+
+function GetAppUrl(P: String): String;
+begin
+  Result := 'http://' + ServerAddress + ':5080';
 end;
 
 function NewSecret: String;
@@ -104,7 +103,6 @@ end;
 function NextButtonClick(PageID: Integer): Boolean;
 begin
   Result := True;
-
   if PageID = ServerPage.ID then
   begin
     ServerAddress := NormalizeAddress(ServerPage.Values[0]);
@@ -140,7 +138,6 @@ begin
   P := ExpandConstant('{app}\AVA-Surface-Production.json');
   if FileExists(P) then
     Exit;
-
   S := NewSecret;
   J := '{' + #13#10 +
        '  "Server":{"IpAddress":"' + ServerAddress + '","Port":5080},' + #13#10 +
@@ -169,10 +166,8 @@ var
 begin
   E := ExpandConstant('{app}\{#AppExe}');
   B := '"' + E + '" --urls "http://' + ServerAddress + ':5080"';
-
   if not ServiceExists('{#ServiceName}') then
     ExecWait(ExpandConstant('{sys}\sc.exe'), 'create "{#ServiceName}" binPath= "' + B + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#AppName}"');
-
   ExecWait(ExpandConstant('{sys}\sc.exe'), 'config "{#ServiceName}" binPath= "' + B + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#AppName}"');
   ExecWait(ExpandConstant('{sys}\sc.exe'), 'sidtype "{#ServiceName}" unrestricted');
 end;
