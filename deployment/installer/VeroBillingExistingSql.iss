@@ -36,7 +36,7 @@ Name: "{group}\Production Configuration"; Filename: "{app}\AVA-Surface-Productio
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=\"Vero Billing System (TCP 5080)\""; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Vero Billing System (TCP 5080)"""; Flags: runhidden waituntilterminated skipifdoesntexist
 
 [Code]
 var ServerPage, DbPage: TInputQueryWizardPage;
@@ -129,7 +129,7 @@ end;
 procedure Firewall;
 var R: Integer;
 begin
- Exec(ExpandConstant('{sys}\netsh.exe'),'advfirewall firewall add rule name="Vero Billing System (TCP 5080)" dir=in action=allow protocol=TCP localport=5080 profile=domain,private','','SW_HIDE',ewWaitUntilTerminated,R);
+ Exec(ExpandConstant('{sys}\netsh.exe'),'advfirewall firewall add rule name="Vero Billing System (TCP 5080)" dir=in action=allow protocol=TCP localport=5080 profile=domain,private','',SW_HIDE,ewWaitUntilTerminated,R);
 end;
 
 procedure CurStepChanged(Step: TSetupStep);
