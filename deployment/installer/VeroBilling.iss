@@ -34,6 +34,7 @@ Source: "..\prerequisites\SQLEXPR_x64_ENU.exe"; DestDir: "{tmp}"; Flags: deletea
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{code:GetAppUrl}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{code:GetAppUrl}"
+Name: "{group}\Production Configuration"; Filename: "{app}\AVA-Surface-Production.json"
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
@@ -41,73 +42,62 @@ Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden 
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=\"Vero Billing System (TCP 5080)\""; Flags: runhidden waituntilterminated skipifdoesntexist
 
 [Code]
-const
-  ConnectionString = 'Server=.\SQLEXPRESS;Database=AVASurfaceBilling;Trusted_Connection=True;TrustServerCertificate=True';
-
 var
   ServerAddressPage: TInputQueryWizardPage;
+  DatabasePage: TInputQueryWizardPage;
   ServerAddress: String;
+  DatabaseServer: String;
+  DatabaseName: String;
 
 function RunAndWait(const FileName, Params, WorkingDir: String; Show: Integer): Boolean;
-var
-  ResultCode: Integer;
+var ResultCode: Integer;
 begin
   Result := Exec(FileName, Params, WorkingDir, Show, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
 function ServiceExists(const Name: String): Boolean;
-var
-  ResultCode: Integer;
+var ResultCode: Integer;
 begin
   Result := Exec(ExpandConstant('{sys}\sc.exe'), 'query "' + Name + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
 function GenerateSecret: String;
-const
-  Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-var
-  I: Integer;
+const Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+var I: Integer;
 begin
-  Result := '';
-  Randomize;
-  for I := 1 to 64 do
-    Result := Result + Chars[Random(Length(Chars)) + 1];
+  Result := ''; Randomize;
+  for I := 1 to 64 do Result := Result + Chars[Random(Length(Chars)) + 1];
 end;
 
 function GetAppUrl(Param: String): String;
 begin
-  if Trim(ServerAddress) = '' then
-    Result := 'http://localhost:5080'
-  else
-    Result := 'http://' + Trim(ServerAddress) + ':5080';
+  if Trim(ServerAddress) = '' then Result := 'http://localhost:5080'
+  else Result := 'http://' + Trim(ServerAddress) + ':5080';
 end;
 
 function NormalizeServerAddress(Value: String): String;
 begin
   Result := Trim(Value);
-  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
-    Delete(Result, Length(Result), 1);
-
+  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do Delete(Result, Length(Result), 1);
   if Pos('://', Result) > 0 then
   begin
-    if Pos('http://', Lowercase(Result)) = 1 then
-      Delete(Result, 1, Length('http://'))
-    else if Pos('https://', Lowercase(Result)) = 1 then
-      Delete(Result, 1, Length('https://'));
+    if Pos('http://', Lowercase(Result)) = 1 then Delete(Result, 1, Length('http://'))
+    else if Pos('https://', Lowercase(Result)) = 1 then Delete(Result, 1, Length('https://'));
   end;
-
-  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
-    Delete(Result, Length(Result), 1);
+  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do Delete(Result, Length(Result), 1);
 end;
 
 procedure InitializeWizard;
 begin
-  ServerAddressPage := CreateInputQueryPage(wpSelectDir,
-    'Production Server Address',
-    'Choose how users will access Vero Billing System',
-    'Enter the IP address or DNS hostname of this Windows production server. No source-code change is required for another server.');
+  ServerAddressPage := CreateInputQueryPage(wpSelectDir, 'Production Server', 'Configure the application server', 'Enter the IP address or DNS hostname used by client computers.');
   ServerAddressPage.Add('Server IP / hostname:', False);
-  ServerAddressPage.Values[0] := '';
+  ServerAddressPage.Values[0] := '192.168.1.50';
+
+  DatabasePage := CreateInputQueryPage(ServerAddressPage.ID, 'Production Database', 'Configure SQL Server', 'Enter the SQL Server instance and database name. These values are written to an external configuration file and are not compiled into the application.');
+  DatabasePage.Add('SQL Server instance:', False);
+  DatabasePage.Add('Database name:', False);
+  DatabasePage.Values[0] := '.\SQLEXPRESS';
+  DatabasePage.Values[1] := 'AVASurfaceBilling';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -116,35 +106,33 @@ begin
   if CurPageID = ServerAddressPage.ID then
   begin
     ServerAddress := NormalizeServerAddress(ServerAddressPage.Values[0]);
-    if ServerAddress = '' then
-    begin
-      MsgBox('Please enter the production server IP address or hostname.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-
-    if Pos(' ', ServerAddress) > 0 then
-    begin
-      MsgBox('The server IP address or hostname cannot contain spaces.', mbError, MB_OK);
-      Result := False;
-    end;
+    if ServerAddress = '' then begin MsgBox('Please enter the production server IP address or hostname.', mbError, MB_OK); Result := False; Exit; end;
+    if Pos(' ', ServerAddress) > 0 then begin MsgBox('The server IP address or hostname cannot contain spaces.', mbError, MB_OK); Result := False; end;
+  end
+  else if CurPageID = DatabasePage.ID then
+  begin
+    DatabaseServer := Trim(DatabasePage.Values[0]);
+    DatabaseName := Trim(DatabasePage.Values[1]);
+    if DatabaseServer = '' then begin MsgBox('Please enter the SQL Server instance.', mbError, MB_OK); Result := False; Exit; end;
+    if DatabaseName = '' then begin MsgBox('Please enter the database name.', mbError, MB_OK); Result := False; end;
   end;
 end;
 
 procedure WriteProductionConfig;
-var
-  ConfigPath: String;
-  Secret: String;
-  Json: String;
+var ConfigPath, Secret, Json: String;
 begin
-  ConfigPath := ExpandConstant('{app}\appsettings.Production.json');
-  if FileExists(ConfigPath) then
-    Exit;
-
+  ConfigPath := ExpandConstant('{app}\AVA-Surface-Production.json');
+  if FileExists(ConfigPath) then Exit;
   Secret := GenerateSecret;
   Json := '{' + #13#10 +
-    '  "ConnectionStrings": {' + #13#10 +
-    '    "DefaultConnection": "Server=.\\SQLEXPRESS;Database=AVASurfaceBilling;Trusted_Connection=True;TrustServerCertificate=True"' + #13#10 +
+    '  "Server": {' + #13#10 +
+    '    "IpAddress": "' + ServerAddress + '",' + #13#10 +
+    '    "Port": 5080' + #13#10 +
+    '  },' + #13#10 +
+    '  "Database": {' + #13#10 +
+    '    "Server": "' + DatabaseServer + '",' + #13#10 +
+    '    "Database": "' + DatabaseName + '",' + #13#10 +
+    '    "Authentication": "Windows"' + #13#10 +
     '  },' + #13#10 +
     '  "Authentication": {' + #13#10 +
     '    "JwtSecret": "' + Secret + '"' + #13#10 +
@@ -155,185 +143,102 @@ begin
     '    ]' + #13#10 +
     '  },' + #13#10 +
     '  "GstVerification": {' + #13#10 +
-    '    "BaseUrl": "",' + #13#10 +
-    '    "ApiToken": "",' + #13#10 +
-    '    "ClientId": "",' + #13#10 +
-    '    "ClientSecret": "",' + #13#10 +
-    '    "RequesterGstin": "",' + #13#10 +
-    '    "AuthToken": ""' + #13#10 +
+    '    "BaseUrl": "", "ApiToken": "", "ClientId": "", "ClientSecret": "", "RequesterGstin": "", "AuthToken": ""' + #13#10 +
     '  },' + #13#10 +
     '  "Logging": {' + #13#10 +
-    '    "LogLevel": {' + #13#10 +
-    '      "Default": "Information",' + #13#10 +
-    '      "Microsoft.AspNetCore": "Warning",' + #13#10 +
-    '      "Microsoft.EntityFrameworkCore.Database.Command": "Warning"' + #13#10 +
-    '    },' + #13#10 +
-    '    "EventLog": {' + #13#10 +
-    '      "LogLevel": {' + #13#10 +
-    '        "Default": "Information",' + #13#10 +
-    '        "Microsoft": "Warning"' + #13#10 +
-    '      }' + #13#10 +
-    '    }' + #13#10 +
+    '    "LogLevel": { "Default": "Information", "Microsoft.AspNetCore": "Warning", "Microsoft.EntityFrameworkCore.Database.Command": "Warning" }' + #13#10 +
     '  },' + #13#10 +
     '  "AllowedHosts": "*"' + #13#10 +
     '}' + #13#10;
-
   SaveStringToFile(ConfigPath, Json, False);
 end;
 
 procedure ProtectProductionConfig;
-var
-  ConfigPath: String;
-  ResultCode: Integer;
+var ConfigPath: String; ResultCode: Integer;
 begin
-  ConfigPath := ExpandConstant('{app}\appsettings.Production.json');
-  Exec(ExpandConstant('{sys}\icacls.exe'),
-    '"' + ConfigPath + '" /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "LOCAL SERVICE:R"',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  ConfigPath := ExpandConstant('{app}\AVA-Surface-Production.json');
+  Exec(ExpandConstant('{sys}\icacls.exe'), '"' + ConfigPath + '" /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "LOCAL SERVICE:R"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure ConfigureService;
-var
-  ExePath: String;
-  ServiceBinPath: String;
+var ExePath, ServiceBinPath: String;
 begin
   ExePath := ExpandConstant('{app}\{#AppExe}');
-  ServiceBinPath := '"' + ExePath + '" --urls "http://' + ServerAddress + ':5080"';
-
+  ServiceBinPath := '"' + ExePath + '"';
   if not ServiceExists('{#ServiceName}') then
-    RunAndWait(ExpandConstant('{sys}\sc.exe'),
-      'create "{#ServiceName}" binPath= "' + ServiceBinPath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"',
-      '', SW_HIDE);
-
-  RunAndWait(ExpandConstant('{sys}\sc.exe'),
-    'config "{#ServiceName}" binPath= "' + ServiceBinPath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"',
-    '', SW_HIDE);
-
-  RunAndWait(ExpandConstant('{sys}\sc.exe'),
-    'sidtype "{#ServiceName}" unrestricted',
-    '', SW_HIDE);
-
-  RunAndWait(ExpandConstant('{sys}\sc.exe'),
-    'failure "{#ServiceName}" reset= 86400 actions= restart/60000/restart/60000/none/0',
-    '', SW_HIDE);
-
-  RunAndWait(ExpandConstant('{sys}\sc.exe'),
-    'config "{#ServiceName}" depend= MSSQL$SQLEXPRESS',
-    '', SW_HIDE);
+    RunAndWait(ExpandConstant('{sys}\sc.exe'), 'create "{#ServiceName}" binPath= "' + ServiceBinPath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"', '', SW_HIDE);
+  RunAndWait(ExpandConstant('{sys}\sc.exe'), 'config "{#ServiceName}" binPath= "' + ServiceBinPath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"', '', SW_HIDE);
+  RunAndWait(ExpandConstant('{sys}\sc.exe'), 'sidtype "{#ServiceName}" unrestricted', '', SW_HIDE);
+  RunAndWait(ExpandConstant('{sys}\sc.exe'), 'failure "{#ServiceName}" reset= 86400 actions= restart/60000/restart/60000/none/0', '', SW_HIDE);
 end;
 
 procedure InstallSqlExpressIfNeeded;
-var
-  SqlInstaller: String;
-  ResultCode: Integer;
+var SqlInstaller: String; ResultCode: Integer;
 begin
-  if ServiceExists('MSSQL$SQLEXPRESS') then
-    Exit;
-
+  if ServiceExists('MSSQL$SQLEXPRESS') then Exit;
   SqlInstaller := ExpandConstant('{tmp}\SQLEXPR_x64_ENU.exe');
-  if not FileExists(SqlInstaller) then
-    RaiseException('SQL Server Express media was not found in the installer.');
-
-  if not Exec(SqlInstaller,
-    '/Q /ACTION=Install /FEATURES=SQL /INSTANCENAME=SQLEXPRESS /SQLSVCACCOUNT="NT SERVICE\MSSQL$SQLEXPRESS" /SQLSVCSTARTUPTYPE=Automatic /ADDCURRENTUSERASSQLADMIN=True /IACCEPTSQLSERVERLICENSETERMS',
-    '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
-    RaiseException('Unable to start SQL Server Express setup.');
-
-  if ResultCode <> 0 then
-    RaiseException('SQL Server Express setup failed with exit code ' + IntToStr(ResultCode) + '.');
+  if not FileExists(SqlInstaller) then RaiseException('SQL Server Express media was not found in the installer.');
+  if not Exec(SqlInstaller, '/Q /ACTION=Install /FEATURES=SQL /INSTANCENAME=SQLEXPRESS /SQLSVCACCOUNT="NT SERVICE\MSSQL$SQLEXPRESS" /SQLSVCSTARTUPTYPE=Automatic /ADDCURRENTUSERASSQLADMIN=True /IACCEPTSQLSERVERLICENSETERMS', '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then RaiseException('Unable to start SQL Server Express setup.');
+  if ResultCode <> 0 then RaiseException('SQL Server Express setup failed with exit code ' + IntToStr(ResultCode) + '.');
 end;
 
 procedure WaitForSql;
-var
-  I: Integer;
+var I: Integer;
 begin
-  for I := 1 to 60 do
-  begin
-    if ServiceExists('MSSQL$SQLEXPRESS') then
-      Exit;
-    Sleep(1000);
-  end;
+  for I := 1 to 60 do begin if ServiceExists('MSSQL$SQLEXPRESS') then Exit; Sleep(1000); end;
   RaiseException('SQL Server Express service MSSQL$SQLEXPRESS was not detected after installation.');
 end;
 
 procedure PrepareExistingService;
-var
-  ResultCode: Integer;
+var ResultCode: Integer;
 begin
-  if ServiceExists('{#ServiceName}') then
-  begin
-    Exec(ExpandConstant('{sys}\sc.exe'), 'stop "{#ServiceName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Sleep(1500);
-  end;
+  if ServiceExists('{#ServiceName}') then begin Exec(ExpandConstant('{sys}\sc.exe'), 'stop "{#ServiceName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode); Sleep(1500); end;
 end;
 
 procedure InitializeDatabase;
-var
-  ScriptPath: String;
-  ResultCode: Integer;
-  Params: String;
+var ScriptPath, Params: String; ResultCode: Integer;
 begin
   ScriptPath := ExpandConstant('{app}\database\Initialize-Sql.ps1');
-  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '"';
-  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    RaiseException('Unable to start SQL initialization script.');
-  if ResultCode <> 0 then
-    RaiseException('SQL initialization failed with exit code ' + IntToStr(ResultCode) + '.');
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" -ConfigPath "' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" -ServiceName "{#ServiceName}"';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then RaiseException('Unable to start SQL initialization script.');
+  if ResultCode <> 0 then RaiseException('SQL initialization failed with exit code ' + IntToStr(ResultCode) + '.');
 end;
 
 procedure ApplyMigrations;
-var
-  BundlePath: String;
-  Params: String;
-  ResultCode: Integer;
+var BundlePath, Params: String; ResultCode: Integer;
 begin
   BundlePath := ExpandConstant('{app}\database\efbundle.exe');
-  Params := '--connection "' + ConnectionString + '" --verbose';
-  if not Exec(BundlePath, Params, ExpandConstant('{app}\database'), SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
-    RaiseException('Unable to start EF Core migration bundle.');
-  if ResultCode <> 0 then
-    RaiseException('Database migration failed with exit code ' + IntToStr(ResultCode) + '.');
+  Params := '--connection "Server=' + DatabaseServer + ';Database=' + DatabaseName + ';Trusted_Connection=True;TrustServerCertificate=True" --verbose';
+  if not Exec(BundlePath, Params, ExpandConstant('{app}\database'), SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then RaiseException('Unable to start EF Core migration bundle.');
+  if ResultCode <> 0 then RaiseException('Database migration failed with exit code ' + IntToStr(ResultCode) + '.');
 end;
 
 procedure ConfigureFirewall;
-var
-  ResultCode: Integer;
+var ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall delete rule name="Vero Billing System (TCP 5080)"',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall add rule name="Vero Billing System (TCP 5080)" dir=in action=allow protocol=TCP localport=5080 profile=domain,private',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall delete rule name="Vero Billing System (TCP 5080)"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="Vero Billing System (TCP 5080)" dir=in action=allow protocol=TCP localport=5080 profile=domain,private', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure StartBillingService;
-var
-  ResultCode: Integer;
 begin
-  if not RunAndWait(ExpandConstant('{sys}\sc.exe'), 'start "{#ServiceName}"', '', SW_HIDE) then
-    RaiseException('Vero Billing System service could not be started.');
-
+  if not RunAndWait(ExpandConstant('{sys}\sc.exe'), 'start "{#ServiceName}"', '', SW_HIDE) then RaiseException('Vero Billing System service could not be started.');
   Sleep(2000);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-begin
-  Result := '';
-  PrepareExistingService;
-end;
+begin Result := ''; PrepareExistingService; end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then
-  begin
-    InstallSqlExpressIfNeeded;
-    WaitForSql;
-    ConfigureService;
+  if CurStep = ssPostInstall then begin
     WriteProductionConfig;
     ProtectProductionConfig;
+    InstallSqlExpressIfNeeded;
+    WaitForSql;
     InitializeDatabase;
     ApplyMigrations;
+    ConfigureService;
     ConfigureFirewall;
     StartBillingService;
   end;
