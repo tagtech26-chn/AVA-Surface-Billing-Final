@@ -55,6 +55,24 @@ begin
     Result := Copy(Result, 1, Length(Result) - 1);
 end;
 
+function JsonEscape(Value: String): String;
+var
+  I: Integer;
+  Ch: String;
+begin
+  Result := '';
+  for I := 1 to Length(Value) do
+  begin
+    Ch := Value[I];
+    if Ch = '\' then
+      Result := Result + '\\'
+    else if Ch = '"' then
+      Result := Result + '\"'
+    else
+      Result := Result + Ch;
+  end;
+end;
+
 procedure InitializeWizard;
 begin
   ServerPage := CreateInputQueryPage(wpSelectDir, 'Production Server', 'Configure application server', 'Enter the IP address or DNS hostname used by client machines.');
@@ -100,13 +118,19 @@ procedure WriteConfig;
 var
   ConfigPath: String;
   ConfigText: String;
+  EscapedServer: String;
+  EscapedDatabase: String;
+  EscapedAddress: String;
 begin
   ConfigPath := ExpandConstant('{app}\AVA-Surface-Production.json');
+  EscapedServer := JsonEscape(DatabaseServer);
+  EscapedDatabase := JsonEscape(DatabaseName);
+  EscapedAddress := JsonEscape(ServerAddress);
   ConfigText := '{' + #13#10;
-  ConfigText := ConfigText + '  "Server": { "IpAddress": "' + ServerAddress + '", "Port": 5080 },' + #13#10;
-  ConfigText := ConfigText + '  "Database": { "Server": "' + DatabaseServer + '", "Database": "' + DatabaseName + '", "Authentication": "Windows" },' + #13#10;
+  ConfigText := ConfigText + '  "Server": { "IpAddress": "' + EscapedAddress + '", "Port": 5080 },' + #13#10;
+  ConfigText := ConfigText + '  "Database": { "Server": "' + EscapedServer + '", "Database": "' + EscapedDatabase + '", "Authentication": "Windows" },' + #13#10;
   ConfigText := ConfigText + '  "Authentication": { "JwtSecret": "AVA-Production-Secret-1.1.0" },' + #13#10;
-  ConfigText := ConfigText + '  "Cors": { "AllowedOrigins": [ "http://' + ServerAddress + ':5080" ] },' + #13#10;
+  ConfigText := ConfigText + '  "Cors": { "AllowedOrigins": [ "http://' + EscapedAddress + ':5080" ] },' + #13#10;
   ConfigText := ConfigText + '  "AllowedHosts": "*"' + #13#10;
   ConfigText := ConfigText + '}';
   if not SaveStringToFile(ConfigPath, ConfigText, False) then
