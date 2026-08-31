@@ -3,7 +3,6 @@ using AVASurface.Server.Filters;
 using AVASurface.Server.Infrastructure;
 using AVASurface.Server.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
@@ -30,7 +29,6 @@ if (!string.IsNullOrWhiteSpace(serverIp))
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 50 * 1024 * 1024;
-    options.Limits.MinRequestDataRate = null;
 });
 
 builder.Services.AddControllers(options =>
