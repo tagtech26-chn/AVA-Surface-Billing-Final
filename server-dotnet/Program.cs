@@ -21,10 +21,12 @@ builder.Host.UseWindowsService(options =>
     options.ServiceName = "Vero Billing System";
 });
 
-var serverIp = builder.Configuration["Server:IpAddress"];
 var serverPort = builder.Configuration.GetValue<int?>("Server:Port") ?? 5080;
-if (!string.IsNullOrWhiteSpace(serverIp))
-    builder.WebHost.UseUrls($"http://{serverIp}:{serverPort}");
+var bindAddress = builder.Configuration["Server:BindAddress"];
+if (string.IsNullOrWhiteSpace(bindAddress))
+    bindAddress = "0.0.0.0";
+
+builder.WebHost.UseUrls($"http://{bindAddress}:{serverPort}");
 
 builder.WebHost.ConfigureKestrel(options =>
 {
