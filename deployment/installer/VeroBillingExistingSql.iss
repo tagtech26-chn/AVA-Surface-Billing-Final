@@ -109,15 +109,9 @@ var
   ConfigPath: String;
   ConfigText: String;
   JwtSecret: String;
-  I: Integer;
-  Alphabet: String;
 begin
   ConfigPath := ExpandConstant('{app}\AVA-Surface-Production.json');
-  Alphabet := 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  JwtSecret := '';
-  Randomize;
-  for I := 1 to 64 do
-    JwtSecret := JwtSecret + Alphabet[Random(Length(Alphabet)) + 1];
+  JwtSecret := 'AVA-' + GetDateTimeString('yyyymmddhhnnss', '', '') + '-ProductionSecret';
 
   ConfigText := '{' + #13#10;
   ConfigText := ConfigText + '  "Server": { "IpAddress": "' + ServerAddress + '", "Port": 5080 },' + #13#10;
