@@ -109,9 +109,11 @@ var
   ConfigPath: String;
   ConfigText: String;
   JwtSecret: String;
+  TimeText: String;
 begin
   ConfigPath := ExpandConstant('{app}\AVA-Surface-Production.json');
-  JwtSecret := 'AVA-' + GetDateTimeString('yyyymmddhhnnss', '', '') + '-ProductionSecret';
+  TimeText := GetDateTimeString('yyyymmddhhnnss', '', '');
+  JwtSecret := 'AVA-' + TimeText + '-ProductionSecret';
 
   ConfigText := '{' + #13#10;
   ConfigText := ConfigText + '  "Server": { "IpAddress": "' + ServerAddress + '", "Port": 5080 },' + #13#10;
@@ -131,7 +133,7 @@ var
   ServiceCommand: String;
 begin
   ExePath := ExpandConstant('{app}\{#AppExe}');
-  ServiceCommand := 'create "{#ServiceName}" binPath= ""' + ExePath + '" --urls http://0.0.0.0:5080" start= auto';
+  ServiceCommand := 'create "{#ServiceName}" binPath= "' + ExePath + ' --urls http://0.0.0.0:5080" start= auto';
   Exec(ExpandConstant('{sys}\sc.exe'), ServiceCommand, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\sc.exe'), 'start "{#ServiceName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
