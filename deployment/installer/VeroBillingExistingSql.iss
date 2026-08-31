@@ -35,7 +35,6 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{code:GetAppUrl}"
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=\"Vero Billing System (TCP 5080)\""; Flags: runhidden waituntilterminated skipifdoesntexist
 
 [Code]
 var
@@ -154,9 +153,7 @@ procedure ProtectConfig;
 var
   R: Integer;
 begin
-  Exec(ExpandConstant('{sys}\icacls.exe'),
-       '"' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "LOCAL SERVICE:R"',
-       '', SW_HIDE, ewWaitUntilTerminated, R);
+  Exec(ExpandConstant('{sys}\icacls.exe'), '"' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "LOCAL SERVICE:R"', '', SW_HIDE, ewWaitUntilTerminated, R);
 end;
 
 procedure ConfigureService;
