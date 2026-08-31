@@ -44,47 +44,29 @@ var
   DatabaseServer: String;
   DatabaseName: String;
 
-function ExecWait(const FileName, Params: String): Boolean;
-var
-  R: Integer;
-begin
-  Result := Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, R) and (R = 0);
-end;
-
-function NormalizeAddress(V: String): String;
-begin
-  Result := Trim(V);
-  if Pos('http://', Lowercase(Result)) = 1 then
-    Delete(Result, 1, 7)
-  else if Pos('https://', Lowercase(Result)) = 1 then
-    Delete(Result, 1, 8);
-  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
-    Delete(Result, Length(Result), 1);
-end;
-
-function GetAppUrl(P: String): String;
+function GetAppUrl(Param: String): String;
 begin
   Result := 'http://' + ServerAddress + ':5080';
 end;
 
-function NewSecret: String;
-const
-  C = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-var
-  I: Integer;
+function NormalizeAddress(Value: String): String;
 begin
-  Result := '';
-  Randomize;
-  for I := 1 to 64 do
-    Result := Result + C[Random(Length(C)) + 1];
+  Result := Trim(Value);
+  if Pos('http://', LowerCase(Result)) = 1 then
+    Result := Copy(Result, 8, Length(Result));
+  if Pos('https://', LowerCase(Result)) = 1 then
+    Result := Copy(Result, 9, Length(Result));
+  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
+    Result := Copy(Result, 1, Length(Result) - 1);
 end;
 
 procedure InitializeWizard;
 begin
-  ServerPage := CreateInputQueryPage(wpSelectDir, 'Production Server', 'Configure application server', 'Enter the LAN/static IP address or DNS hostname clients will use.');
+  ServerPage := CreateInputQueryPage(wpSelectDir, 'Production Server', 'Configure application server', 'Enter the IP address or DNS hostname used by client machines.');
   ServerPage.Add('Server IP / hostname:', False);
   ServerPage.Values[0] := '192.168.1.50';
-  DbPage := CreateInputQueryPage(ServerPage.ID, 'Production Database', 'Configure existing SQL Server', 'SQL Server must already be installed on this machine or reachable over the network.');
+
+  DbPage := CreateInputQueryPage(ServerPage.ID, 'Production Database', 'Configure existing SQL Server', 'Enter the existing SQL Server instance and database name.');
   DbPage.Add('SQL Server instance:', False);
   DbPage.Add('Database name:', False);
   DbPage.Values[0] := '.\SQLEXPRESS';
@@ -94,27 +76,29 @@ end;
 function NextButtonClick(PageID: Integer): Boolean;
 begin
   Result := True;
+
   if PageID = ServerPage.ID then
   begin
     ServerAddress := NormalizeAddress(ServerPage.Values[0]);
     if ServerAddress = '' then
     begin
-      MsgBox('Enter the production server IP/hostname.', mbError, MB_OK);
+      MsgBox('Please enter the production server IP address or hostname.', mbError, MB_OK);
       Result := False;
     end;
-  end
-  else if PageID = DbPage.ID then
+  end;
+
+  if PageID = DbPage.ID then
   begin
     DatabaseServer := Trim(DbPage.Values[0]);
     DatabaseName := Trim(DbPage.Values[1]);
     if DatabaseServer = '' then
     begin
-      MsgBox('Enter the SQL Server instance.', mbError, MB_OK);
+      MsgBox('Please enter the SQL Server instance.', mbError, MB_OK);
       Result := False;
-    end
-    else if DatabaseName = '' then
+    end;
+    if DatabaseName = '' then
     begin
-      MsgBox('Enter the database name.', mbError, MB_OK);
+      MsgBox('Please enter the database name.', mbError, MB_OK);
       Result := False;
     end;
   end;
@@ -122,81 +106,66 @@ end;
 
 procedure WriteConfig;
 var
-  P: String;
-  S: String;
-  J: String;
+  ConfigPath: String;
+  ConfigText: String;
+  JwtSecret: String;
+  I: Integer;
+  Alphabet: String;
 begin
-  P := ExpandConstant('{app}\AVA-Surface-Production.json');
-  S := NewSecret;
-  J := '{' + #13#10 +
-       '  "Server":{"IpAddress":"' + ServerAddress + '","Port":5080},' + #13#10 +
-       '  "Database":{"Server":"' + DatabaseServer + '","Database":"' + DatabaseName + '","Authentication":"Windows"},' + #13#10 +
-       '  "Authentication":{"JwtSecret":"' + S + '"},' + #13#10 +
-       '  "Cors":{"AllowedOrigins":["http://' + ServerAddress + ':5080"]},' + #13#10 +
-       '  "GstVerification":{"BaseUrl":"","ApiToken":"","ClientId":"","ClientSecret":"","RequesterGstin":"","AuthToken":""},' + #13#10 +
-       '  "AllowedHosts":"*"' + #13#10 +
-       '}';
-  SaveStringToFile(P, J, False);
+  ConfigPath := ExpandConstant('{app}\AVA-Surface-Production.json');
+  Alphabet := 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  JwtSecret := '';
+  Randomize;
+  for I := 1 to 64 do
+    JwtSecret := JwtSecret + Alphabet[Random(Length(Alphabet)) + 1];
+
+  ConfigText := '{' + #13#10;
+  ConfigText := ConfigText + '  "Server": { "IpAddress": "' + ServerAddress + '", "Port": 5080 },' + #13#10;
+  ConfigText := ConfigText + '  "Database": { "Server": "' + DatabaseServer + '", "Database": "' + DatabaseName + '", "Authentication": "Windows" },' + #13#10;
+  ConfigText := ConfigText + '  "Authentication": { "JwtSecret": "' + JwtSecret + '" },' + #13#10;
+  ConfigText := ConfigText + '  "Cors": { "AllowedOrigins": [ "http://' + ServerAddress + ':5080" ] },' + #13#10;
+  ConfigText := ConfigText + '  "AllowedHosts": "*"' + #13#10;
+  ConfigText := ConfigText + '}';
+
+  SaveStringToFile(ConfigPath, ConfigText, False);
 end;
 
-procedure ProtectConfig;
+procedure StartService;
 var
-  R: Integer;
+  ResultCode: Integer;
+  ExePath: String;
+  ServiceCommand: String;
 begin
-  Exec(ExpandConstant('{sys}\icacls.exe'), '"' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "LOCAL SERVICE:R"', '', SW_HIDE, ewWaitUntilTerminated, R);
+  ExePath := ExpandConstant('{app}\{#AppExe}');
+  ServiceCommand := 'create "{#ServiceName}" binPath= ""' + ExePath + '" --urls http://0.0.0.0:5080" start= auto';
+  Exec(ExpandConstant('{sys}\sc.exe'), ServiceCommand, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'start "{#ServiceName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-procedure ConfigureService;
+procedure AddFirewallRule;
 var
-  E: String;
-  B: String;
-  Params: String;
+  ResultCode: Integer;
 begin
-  E := ExpandConstant('{app}\{#AppExe}');
-  B := '"' + E + '" --urls "http://' + ServerAddress + ':5080"';
-  Params := 'create "{#ServiceName}" binPath= "' + B + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#AppName}"';
-  ExecWait(ExpandConstant('{sys}\sc.exe'), Params);
-  Params := 'config "{#ServiceName}" binPath= "' + B + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#AppName}"';
-  ExecWait(ExpandConstant('{sys}\sc.exe'), Params);
-  ExecWait(ExpandConstant('{sys}\sc.exe'), 'sidtype "{#ServiceName}" unrestricted');
-end;
-
-procedure InitDb;
-var
-  P: String;
-  R: Integer;
-begin
-  P := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\database\Initialize-Sql.ps1') + '" -ConfigPath "' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" -ServiceName "{#ServiceName}"';
-  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), P, '', SW_HIDE, ewWaitUntilTerminated, R) or (R <> 0) then
-    RaiseException('SQL initialization failed.');
-end;
-
-procedure MigrateDb;
-var
-  P: String;
-  R: Integer;
-begin
-  P := '--connection "Server=' + DatabaseServer + ';Database=' + DatabaseName + ';Trusted_Connection=True;TrustServerCertificate=True" --verbose';
-  if not Exec(ExpandConstant('{app}\database\efbundle.exe'), P, ExpandConstant('{app}\database'), SW_SHOWNORMAL, ewWaitUntilTerminated, R) or (R <> 0) then
-    RaiseException('Database migration failed.');
-end;
-
-procedure Firewall;
-var
-  R: Integer;
-begin
-  Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="Vero Billing System TCP 5080" dir=in action=allow protocol=TCP localport=5080 profile=domain,private', '', SW_HIDE, ewWaitUntilTerminated, R);
+  Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="Vero Billing System TCP 5080" dir=in action=allow protocol=TCP localport=5080 profile=domain,private', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  PowerShellParams: String;
+  MigrationParams: String;
 begin
   if CurStep = ssPostInstall then
   begin
     WriteConfig;
-    ProtectConfig;
-    ConfigureService;
-    InitDb;
-    MigrateDb;
-    Firewall;
+
+    PowerShellParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\database\Initialize-Sql.ps1') + '" -ConfigPath "' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" -ServiceName "{#ServiceName}"';
+    Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), PowerShellParams, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+    MigrationParams := '--connection "Server=' + DatabaseServer + ';Database=' + DatabaseName + ';Trusted_Connection=True;TrustServerCertificate=True"';
+    Exec(ExpandConstant('{app}\database\efbundle.exe'), MigrationParams, ExpandConstant('{app}\database'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+    StartService;
+    AddFirewallRule;
   end;
 end;
