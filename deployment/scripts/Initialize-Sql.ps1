@@ -1,17 +1,23 @@
 param(
-    [string]$ServerInstance = '.\SQLEXPRESS',
-    [string]$DatabaseName = 'AVASurfaceBilling',
+    [string]$ConfigPath = '',
     [string]$ServiceName = 'VeroBillingService'
 )
 
 $ErrorActionPreference = 'Stop'
 
-function Invoke-SqlBatch {
-    param(
-        [string]$ConnectionString,
-        [string]$Sql
-    )
+if ([string]::IsNullOrWhiteSpace($ConfigPath) -or -not (Test-Path -LiteralPath $ConfigPath)) {
+    throw "Production configuration file was not found: $ConfigPath"
+}
 
+$config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+$ServerInstance = [string]$config.Database.Server
+$DatabaseName = [string]$config.Database.Database
+
+if ([string]::IsNullOrWhiteSpace($ServerInstance)) { throw 'Database.Server is required in AVA-Surface-Production.json.' }
+if ([string]::IsNullOrWhiteSpace($DatabaseName)) { throw 'Database.Database is required in AVA-Surface-Production.json.' }
+
+function Invoke-SqlBatch {
+    param([string]$ConnectionString, [string]$Sql)
     $connection = New-Object System.Data.SqlClient.SqlConnection $ConnectionString
     try {
         $connection.Open()
@@ -21,9 +27,7 @@ function Invoke-SqlBatch {
         [void]$command.ExecuteNonQuery()
     }
     finally {
-        if ($connection.State -ne [System.Data.ConnectionState]::Closed) {
-            $connection.Close()
-        }
+        if ($connection.State -ne [System.Data.ConnectionState]::Closed) { $connection.Close() }
         $connection.Dispose()
     }
 }
@@ -32,7 +36,7 @@ $masterConnection = "Server=$ServerInstance;Database=master;Integrated Security=
 $escapedDatabase = $DatabaseName.Replace(']', ']]')
 $escapedService = "NT SERVICE\$ServiceName".Replace(']', ']]')
 
-Write-Host "Preparing SQL Server instance $ServerInstance..."
+Write-Host "Preparing SQL Server instance $ServerInstance and database $DatabaseName..."
 
 Invoke-SqlBatch -ConnectionString $masterConnection -Sql @"
 IF DB_ID(N'$DatabaseName') IS NULL
@@ -47,7 +51,6 @@ END;
 "@
 
 $databaseConnection = "Server=$ServerInstance;Database=$DatabaseName;Integrated Security=True;TrustServerCertificate=True;"
-
 Invoke-SqlBatch -ConnectionString $databaseConnection -Sql @"
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$escapedService')
 BEGIN
