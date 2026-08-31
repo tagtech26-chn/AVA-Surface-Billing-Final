@@ -153,7 +153,9 @@ procedure ProtectConfig;
 var
   R: Integer;
 begin
-  Exec(ExpandConstant('{sys}\icacls.exe'), '"' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "LOCAL SERVICE:R"', '', SW_HIDE, ewWaitUntilTerminated, R);
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+       '"' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "LOCAL SERVICE:R"',
+       '', SW_HIDE, ewWaitUntilTerminated, R);
 end;
 
 procedure ConfigureService;
@@ -196,26 +198,15 @@ begin
   Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="Vero Billing System (TCP 5080)" dir=in action=allow protocol=TCP localport=5080 profile=domain,private', '', SW_HIDE, ewWaitUntilTerminated, R);
 end;
 
-procedure CurStepChanged(Step: TSetupStep);
+procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if Step = ssPostInstall then
+  if CurStep = ssPostInstall then
   begin
     WriteConfig;
     ProtectConfig;
+    ConfigureService;
     InitDb;
     MigrateDb;
-    ConfigureService;
     Firewall;
-    if not ExecWait(ExpandConstant('{sys}\sc.exe'), 'start "{#ServiceName}"') then
-      RaiseException('Vero Billing System service could not be started.');
-  end;
-end;
-
-procedure CurUninstallStepChanged(Step: TUninstallStep);
-begin
-  if Step = usUninstall then
-  begin
-    ExecWait(ExpandConstant('{sys}\sc.exe'), 'stop "{#ServiceName}"');
-    ExecWait(ExpandConstant('{sys}\sc.exe'), 'delete "{#ServiceName}"');
   end;
 end;
