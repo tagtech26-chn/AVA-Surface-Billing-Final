@@ -14,15 +14,23 @@ using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var externalProductionConfig = Path.Combine(AppContext.BaseDirectory, "AVA-Surface-Production.json");
+builder.Configuration.AddJsonFile(externalProductionConfig, optional: true, reloadOnChange: false);
+
 builder.Host.UseWindowsService(options =>
 {
     options.ServiceName = "Vero Billing System";
 });
 
+var serverIp = builder.Configuration["Server:IpAddress"];
+var serverPort = builder.Configuration.GetValue<int?>("Server:Port") ?? 5080;
+if (!string.IsNullOrWhiteSpace(serverIp))
+    builder.WebHost.UseUrls($"http://{serverIp}:{serverPort}");
+
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 50 * 1024 * 1024;
-    options.Limits.MinRequestBodyDataRate = null;
+    options.Limits.MinRequestDataRate = null;
 });
 
 builder.Services.AddControllers(options =>
@@ -38,7 +46,6 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
     options.CustomSchemaIds(type => type.FullName?.Replace('+', '.') ?? type.Name);
-
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header. Enter: Bearer {token}",
@@ -48,24 +55,27 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "bearer",
         BearerFormat = "JWT"
     });
-
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
             new OpenApiSecurityScheme
             {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
             },
             Array.Empty<string>()
         }
     });
 });
-builder.Services.AddDbContext<BillingDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+var configuredConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrWhiteSpace(configuredConnectionString))
+{
+    var databaseServer = builder.Configuration["Database:Server"] ?? @".\SQLEXPRESS";
+    var databaseName = builder.Configuration["Database:Database"] ?? "AVASurfaceBilling";
+    configuredConnectionString = $"Server={databaseServer};Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True";
+}
+
+builder.Services.AddDbContext<BillingDbContext>(options => options.UseSqlServer(configuredConnectionString));
 builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 builder.Services.AddScoped<CategoryPricingService>();
 builder.Services.AddScoped<BillingDiscountSettingsService>();
@@ -81,7 +91,7 @@ builder.Services.AddHttpClient("GstVerification", client =>
 
 var jwtSecret = builder.Configuration["Authentication:JwtSecret"];
 if (string.IsNullOrWhiteSpace(jwtSecret) || Encoding.UTF8.GetByteCount(jwtSecret) < 32)
-    throw new InvalidOperationException("Authentication:JwtSecret must contain at least 32 bytes. Configure it via environment variables or a secret store.");
+    throw new InvalidOperationException("Authentication:JwtSecret must contain at least 32 bytes. Configure it via the protected production configuration.");
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -113,19 +123,11 @@ builder.Services.AddAuthorization(options =>
                  string.Equals(claim.Value, "BRANCH_MANAGER", StringComparison.OrdinalIgnoreCase)))));
 });
 
-var allowedOrigins = builder.Configuration
-    .GetSection("Cors:AllowedOrigins")
-    .Get<string[]>() ?? Array.Empty<string>();
-
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
 if (allowedOrigins.Length > 0)
 {
-    builder.Services.AddCors(options =>
-    {
-        options.AddPolicy("Frontend", policy =>
-            policy.WithOrigins(allowedOrigins)
-                .AllowAnyHeader()
-                .AllowAnyMethod());
-    });
+    builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
+        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod()));
 }
 
 var app = builder.Build();
@@ -138,69 +140,46 @@ if (app.Environment.IsDevelopment())
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
-
-if (allowedOrigins.Length > 0)
-    app.UseCors("Frontend");
-
+if (allowedOrigins.Length > 0) app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.Use(async (context, next) =>
 {
-    if (HttpMethods.IsPost(context.Request.Method) &&
-        context.Request.Path.Equals("/api/invoices", StringComparison.OrdinalIgnoreCase))
+    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.Equals("/api/invoices", StringComparison.OrdinalIgnoreCase))
     {
-        if (context.User.Identity?.IsAuthenticated != true)
-        {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return;
-        }
-
+        if (context.User.Identity?.IsAuthenticated != true) { context.Response.StatusCode = StatusCodes.Status401Unauthorized; return; }
         var role = context.User.FindFirst(ClaimTypes.Role)?.Value;
-        if (!string.Equals(role, "CASHIER", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(role, "BILLING_USER", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(role, "CASHIER", StringComparison.OrdinalIgnoreCase) && !string.Equals(role, "BILLING_USER", StringComparison.OrdinalIgnoreCase))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsJsonAsync(new { message = "Only Cashier or Billing users can create invoices." });
             return;
         }
     }
-
     await next();
 });
 
 app.MapGet("/api/health", async (BillingDbContext db) =>
 {
     var canConnect = await db.Database.CanConnectAsync();
-    return Results.Ok(new
-    {
-        status = canConnect ? "ok" : "database_unavailable",
-        database = db.Database.GetDbConnection().Database,
-        timestamp = DateTime.UtcNow
-    });
+    return Results.Ok(new { status = canConnect ? "ok" : "database_unavailable", database = db.Database.GetDbConnection().Database, timestamp = DateTime.UtcNow });
 });
 
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();
-
-    if (app.Environment.IsDevelopment())
-        await db.Database.MigrateAsync();
-
+    if (app.Environment.IsDevelopment()) await db.Database.MigrateAsync();
     var discountSettings = scope.ServiceProvider.GetRequiredService<BillingDiscountSettingsService>();
     await discountSettings.EnsureSchemaAsync();
-
     var partitionService = scope.ServiceProvider.GetRequiredService<MonthlyInvoicePartitionService>();
     await partitionService.EnsureCurrentMonthAsync();
-
     var billingMasterSeed = scope.ServiceProvider.GetRequiredService<BillingMasterSeedService>();
     await billingMasterSeed.SeedAsync();
-
     var passwordSeeder = scope.ServiceProvider.GetRequiredService<InitialUserPasswordSeeder>();
     await passwordSeeder.SeedAsync();
 }
 
 app.MapControllers();
 app.MapFallbackToFile("index.html");
-
 await app.RunAsync();
