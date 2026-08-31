@@ -32,8 +32,8 @@ Source: "..\scripts\Initialize-Sql.ps1"; DestDir: "{app}\database"; Flags: ignor
 Source: "..\prerequisites\SQLEXPR_x64_ENU.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "http://localhost:5080"
-Name: "{autodesktop}\{#AppName}"; Filename: "http://localhost:5080"
+Name: "{group}\{#AppName}"; Filename: "{code:GetAppUrl}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{code:GetAppUrl}"
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
@@ -43,6 +43,10 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 [Code]
 const
   ConnectionString = 'Server=.\SQLEXPRESS;Database=AVASurfaceBilling;Trusted_Connection=True;TrustServerCertificate=True';
+
+var
+  ServerAddressPage: TInputQueryWizardPage;
+  ServerAddress: String;
 
 function RunAndWait(const FileName, Params, WorkingDir: String; Show: Integer): Boolean;
 var
@@ -70,6 +74,63 @@ begin
     Result := Result + Chars[Random(Length(Chars)) + 1];
 end;
 
+function GetAppUrl(Param: String): String;
+begin
+  if Trim(ServerAddress) = '' then
+    Result := 'http://localhost:5080'
+  else
+    Result := 'http://' + Trim(ServerAddress) + ':5080';
+end;
+
+function NormalizeServerAddress(Value: String): String;
+begin
+  Result := Trim(Value);
+  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
+    Delete(Result, Length(Result), 1);
+
+  if Pos('://', Result) > 0 then
+  begin
+    if Pos('http://', Lowercase(Result)) = 1 then
+      Delete(Result, 1, Length('http://'))
+    else if Pos('https://', Lowercase(Result)) = 1 then
+      Delete(Result, 1, Length('https://'));
+  end;
+
+  while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
+    Delete(Result, Length(Result), 1);
+end;
+
+procedure InitializeWizard;
+begin
+  ServerAddressPage := CreateInputQueryPage(wpSelectDir,
+    'Production Server Address',
+    'Choose how users will access Vero Billing System',
+    'Enter the IP address or DNS hostname of this Windows production server. No source-code change is required for another server.');
+  ServerAddressPage.Add('Server IP / hostname:', False);
+  ServerAddressPage.Values[0] := '192.168.1.100';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = ServerAddressPage.ID then
+  begin
+    ServerAddress := NormalizeServerAddress(ServerAddressPage.Values[0]);
+    if ServerAddress = '' then
+    begin
+      MsgBox('Please enter the production server IP address or hostname.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+
+    if Pos(' ', ServerAddress) > 0 then
+    begin
+      MsgBox('The server IP address or hostname cannot contain spaces.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+end;
+
 procedure WriteProductionConfig;
 var
   ConfigPath: String;
@@ -88,8 +149,17 @@ begin
     '  "Authentication": {' + #13#10 +
     '    "JwtSecret": "' + Secret + '"' + #13#10 +
     '  },' + #13#10 +
+    '  "Kestrel": {' + #13#10 +
+    '    "Endpoints": {' + #13#10 +
+    '      "Http": {' + #13#10 +
+    '        "Url": "http://' + ServerAddress + ':5080"' + #13#10 +
+    '      }' + #13#10 +
+    '    }' + #13#10 +
+    '  },' + #13#10 +
     '  "Cors": {' + #13#10 +
-    '    "AllowedOrigins": []' + #13#10 +
+    '    "AllowedOrigins": [' + #13#10 +
+    '      "http://' + ServerAddress + ':5080"' + #13#10 +
+    '    ]' + #13#10 +
     '  },' + #13#10 +
     '  "GstVerification": {' + #13#10 +
     '    "BaseUrl": "",' + #13#10 +
