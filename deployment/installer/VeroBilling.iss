@@ -107,7 +107,7 @@ begin
     'Choose how users will access Vero Billing System',
     'Enter the IP address or DNS hostname of this Windows production server. No source-code change is required for another server.');
   ServerAddressPage.Add('Server IP / hostname:', False);
-  ServerAddressPage.Values[0] := '192.168.1.100';
+  ServerAddressPage.Values[0] := '';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -148,13 +148,6 @@ begin
     '  },' + #13#10 +
     '  "Authentication": {' + #13#10 +
     '    "JwtSecret": "' + Secret + '"' + #13#10 +
-    '  },' + #13#10 +
-    '  "Kestrel": {' + #13#10 +
-    '    "Endpoints": {' + #13#10 +
-    '      "Http": {' + #13#10 +
-    '        "Url": "http://' + ServerAddress + ':5080"' + #13#10 +
-    '      }' + #13#10 +
-    '    }' + #13#10 +
     '  },' + #13#10 +
     '  "Cors": {' + #13#10 +
     '    "AllowedOrigins": [' + #13#10 +
@@ -202,16 +195,18 @@ end;
 procedure ConfigureService;
 var
   ExePath: String;
+  ServiceBinPath: String;
 begin
   ExePath := ExpandConstant('{app}\{#AppExe}');
+  ServiceBinPath := '"' + ExePath + '" --urls "http://' + ServerAddress + ':5080"';
 
   if not ServiceExists('{#ServiceName}') then
     RunAndWait(ExpandConstant('{sys}\sc.exe'),
-      'create "{#ServiceName}" binPath= "' + ExePath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"',
+      'create "{#ServiceName}" binPath= "' + ServiceBinPath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"',
       '', SW_HIDE);
 
   RunAndWait(ExpandConstant('{sys}\sc.exe'),
-    'config "{#ServiceName}" binPath= "' + ExePath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"',
+    'config "{#ServiceName}" binPath= "' + ServiceBinPath + '" start= auto obj= "NT AUTHORITY\LOCAL SERVICE" displayname= "{#ServiceDisplayName}"',
     '', SW_HIDE);
 
   RunAndWait(ExpandConstant('{sys}\sc.exe'),
