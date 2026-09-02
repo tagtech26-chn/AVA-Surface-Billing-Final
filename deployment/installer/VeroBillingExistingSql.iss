@@ -26,11 +26,13 @@ CloseApplications=yes
 [Files]
 Source: "..\..\artifacts\publish\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Excludes: "appsettings.Production.json"
 Source: "..\..\artifacts\efbundle.exe"; DestDir: "{app}\database"; Flags: ignoreversion
+Source: "..\..\artifacts\schema-baseline.sql"; DestDir: "{app}\database"; Flags: ignoreversion
 Source: "..\scripts\Initialize-Sql.ps1"; DestDir: "{app}\database"; Flags: ignoreversion
+Source: "..\scripts\Seed-InitialData.ps1"; DestDir: "{app}\database"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "http://localhost:5080"
-Name: "{autodesktop}\{#AppName}"; Filename: "http://localhost:5080"
+Name: "{group}\{#AppName}"; Filename: "http://{code:GetServerUrl}"
+Name: "{autodesktop}\{#AppName}"; Filename: "http://{code:GetServerUrl}"
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated skipifdoesntexist
@@ -73,11 +75,17 @@ begin
   end;
 end;
 
+function GetServerUrl(Param: String): String;
+begin
+  Result := ServerAddress + ':5080';
+end;
+
 procedure InitializeWizard;
 begin
   ServerPage := CreateInputQueryPage(wpSelectDir, 'Production Server', 'Configure application server', 'Enter the IP address or DNS hostname used by client machines.');
   ServerPage.Add('Server IP / hostname:', False);
   ServerPage.Values[0] := '192.168.1.50';
+
   DbPage := CreateInputQueryPage(ServerPage.ID, 'Production Database', 'Configure existing SQL Server', 'Enter the existing SQL Server instance and database name.');
   DbPage.Add('SQL Server instance:', False);
   DbPage.Add('Database name:', False);
@@ -88,6 +96,7 @@ end;
 function NextButtonClick(PageID: Integer): Boolean;
 begin
   Result := True;
+
   if PageID = ServerPage.ID then
   begin
     ServerAddress := NormalizeAddress(ServerPage.Values[0]);
@@ -97,6 +106,7 @@ begin
       Result := False;
     end;
   end;
+
   if PageID = DbPage.ID then
   begin
     DatabaseServer := Trim(DbPage.Values[0]);
@@ -126,6 +136,7 @@ begin
   EscapedServer := JsonEscape(DatabaseServer);
   EscapedDatabase := JsonEscape(DatabaseName);
   EscapedAddress := JsonEscape(ServerAddress);
+
   ConfigText := '{' + #13#10;
   ConfigText := ConfigText + '  "Server": { "IpAddress": "' + EscapedAddress + '", "Port": 5080 },' + #13#10;
   ConfigText := ConfigText + '  "Database": { "Server": "' + EscapedServer + '", "Database": "' + EscapedDatabase + '", "Authentication": "Windows" },' + #13#10;
@@ -133,8 +144,33 @@ begin
   ConfigText := ConfigText + '  "Cors": { "AllowedOrigins": [ "http://' + EscapedAddress + ':5080" ] },' + #13#10;
   ConfigText := ConfigText + '  "AllowedHosts": "*"' + #13#10;
   ConfigText := ConfigText + '}';
+
   if not SaveStringToFile(ConfigPath, ConfigText, False) then
     RaiseException('Unable to create production configuration file.');
+end;
+
+procedure RunPowerShellScript(ScriptName: String; ExtraParams: String);
+var
+  ResultCode: Integer;
+  Params: String;
+begin
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\database\' + ScriptName) + '" -ConfigPath "' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" ' + ExtraParams;
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Unable to start ' + ScriptName + '.');
+  if ResultCode <> 0 then
+    RaiseException(ScriptName + ' failed with exit code ' + IntToStr(ResultCode) + '.');
+end;
+
+procedure RunMigrationBundle;
+var
+  ResultCode: Integer;
+  MigrationParams: String;
+begin
+  MigrationParams := '--connection "Server=' + DatabaseServer + ';Database=' + DatabaseName + ';Trusted_Connection=True;TrustServerCertificate=True"';
+  if not Exec(ExpandConstant('{app}\database\efbundle.exe'), MigrationParams, ExpandConstant('{app}\database'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Unable to start EF migration bundle.');
+  if ResultCode <> 0 then
+    RaiseException('EF migration bundle failed with exit code ' + IntToStr(ResultCode) + '.');
 end;
 
 procedure StartService;
@@ -144,34 +180,42 @@ var
   ServiceCommand: String;
 begin
   ExePath := ExpandConstant('{app}\{#AppExe}');
-  ServiceCommand := 'create "{#ServiceName}" binPath= "' + ExePath + ' --urls http://0.0.0.0:5080" start= auto';
+  ServiceCommand := 'create "{#ServiceName}" binPath= "' + ExePath + ' --urls http://0.0.0.0:5080" start= auto obj= "NT SERVICE\{#ServiceName}"';
+
   if not Exec(ExpandConstant('{sys}\sc.exe'), ServiceCommand, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     RaiseException('Unable to create Windows service.');
-  Exec(ExpandConstant('{sys}\sc.exe'), 'start "{#ServiceName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if ResultCode <> 0 then
+    RaiseException('Windows service creation failed with exit code ' + IntToStr(ResultCode) + '.');
+
+  if not Exec(ExpandConstant('{sys}\sc.exe'), 'start "{#ServiceName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Unable to start Windows service.');
+  if ResultCode <> 0 then
+    RaiseException('Windows service start failed with exit code ' + IntToStr(ResultCode) + '.');
 end;
 
 procedure AddFirewallRule;
 var
   ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="Vero Billing System TCP 5080" dir=in action=allow protocol=TCP localport=5080 profile=domain,private', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if not Exec(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="Vero Billing System TCP 5080" dir=in action=allow protocol=TCP localport=5080 profile=domain,private', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Unable to create firewall rule.');
+  if ResultCode <> 0 then
+    RaiseException('Firewall rule creation failed with exit code ' + IntToStr(ResultCode) + '.');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ResultCode: Integer;
-  PowerShellParams: String;
-  MigrationParams: String;
 begin
   if CurStep = ssPostInstall then
   begin
     WriteConfig;
-    PowerShellParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\database\Initialize-Sql.ps1') + '" -ConfigPath "' + ExpandConstant('{app}\AVA-Surface-Production.json') + '" -ServiceName "{#ServiceName}"';
-    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), PowerShellParams, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-      RaiseException('Unable to start SQL initialization.');
-    MigrationParams := '--connection "Server=' + DatabaseServer + ';Database=' + DatabaseName + ';Trusted_Connection=True;TrustServerCertificate=True"';
-    if not Exec(ExpandConstant('{app}\database\efbundle.exe'), MigrationParams, ExpandConstant('{app}\database'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-      RaiseException('Unable to start database migration.');
+
+    RunPowerShellScript('Initialize-Sql.ps1',
+      '-ServiceName "{#ServiceName}" -SchemaPath "' + ExpandConstant('{app}\database\schema-baseline.sql') + '"');
+
+    RunMigrationBundle;
+
+    RunPowerShellScript('Seed-InitialData.ps1', '');
+
     StartService;
     AddFirewallRule;
   end;
