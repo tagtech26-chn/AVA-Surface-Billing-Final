@@ -80,6 +80,7 @@ builder.Services.AddScoped<MonthlyInvoicePartitionService>();
 builder.Services.AddScoped<CategoryPricingService>();
 builder.Services.AddScoped<BillingDiscountSettingsService>();
 builder.Services.AddScoped<GlobalSalespersonDiscountFilter>();
+// Development-only seeders are retained so the existing local development workflow remains unchanged.
 builder.Services.AddScoped<BillingMasterSeedService>();
 builder.Services.AddScoped<InitialUserPasswordSeeder>();
 builder.Services.Configure<GstVerificationOptions>(builder.Configuration.GetSection("GstVerification"));
@@ -166,10 +167,11 @@ app.MapGet("/api/health", async (BillingDbContext db) =>
     return Results.Ok(new { status = canConnect ? "ok" : "database_unavailable", database = db.Database.GetDbConnection().Database, timestamp = DateTime.UtcNow });
 });
 
-using (var scope = app.Services.CreateScope())
+if (app.Environment.IsDevelopment())
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();
-    if (app.Environment.IsDevelopment()) await db.Database.MigrateAsync();
+    await db.Database.MigrateAsync();
     var discountSettings = scope.ServiceProvider.GetRequiredService<BillingDiscountSettingsService>();
     await discountSettings.EnsureSchemaAsync();
     var partitionService = scope.ServiceProvider.GetRequiredService<MonthlyInvoicePartitionService>();
