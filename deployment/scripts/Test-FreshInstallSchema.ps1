@@ -8,9 +8,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$ScriptDir = Split-Path -Parent $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($SchemaPath)) { $SchemaPath = Join-Path $ScriptDir '..\..\artifacts\schema-baseline.sql' }
-if ([string]::IsNullOrWhiteSpace($BundlePath)) { $BundlePath = Join-Path $ScriptDir '..\..\artifacts\efbundle.exe' }
+$DeploymentDir = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($SchemaPath)) { $SchemaPath = Join-Path $DeploymentDir '..\artifacts\schema-baseline.sql' }
+if ([string]::IsNullOrWhiteSpace($BundlePath)) { $BundlePath = Join-Path $DeploymentDir '..\artifacts\efbundle.exe' }
 if ([string]::IsNullOrWhiteSpace($SeedScriptPath)) { $SeedScriptPath = Join-Path $PSScriptRoot 'Seed-InitialData.ps1' }
 
 $SchemaPath = [System.IO.Path]::GetFullPath($SchemaPath)
@@ -64,8 +64,8 @@ Write-Host 'Applying schema baseline...' -ForegroundColor Yellow
 Invoke-SqlScriptFile $db $SchemaPath
 
 Write-Host 'Running EF upgrade bundle (should report no pending migrations)...' -ForegroundColor Yellow
-$connectionArgument = "--connection Server=$ServerInstance;Database=$DatabaseName;Trusted_Connection=True;TrustServerCertificate=True"
-& $BundlePath $connectionArgument
+$connectionString = "Server=$ServerInstance;Database=$DatabaseName;Trusted_Connection=True;TrustServerCertificate=True"
+& $BundlePath '--connection' $connectionString
 if ($LASTEXITCODE -ne 0) { throw "EF migration bundle failed with exit code $LASTEXITCODE." }
 
 $configPath = Join-Path $env:TEMP "AVA-SchemaTest-$([Guid]::NewGuid().ToString('N')).json"
